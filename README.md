@@ -1,3 +1,7 @@
+This is the EdCast version of the main edX platform, diverging from [here](https://github.com/edx/edx-platform/commit/86515df763717b05d9f8eea2bd035640e4f54dc5).
+
+--
+
 This is the main edX platform which consists of LMS and Studio.
 
 See [code.edx.org](http://code.edx.org/) for other parts of the edX code base.
