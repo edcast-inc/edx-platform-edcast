@@ -14,55 +14,65 @@ urlpatterns = ('',  # nopep8
     # certificate view
     url(r'^update_certificate$', 'certificates.views.update_certificate'),
     url(r'^request_certificate$', 'certificates.views.request_certificate'),
-    url(r'^$', 'branding.views.index', name="root"),   # Main marketing page, or redirect to courseware
-    url(r'^dashboard$', 'student.views.dashboard', name="dashboard"),
-    url(r'^login$', 'student.views.signin_user', name="signin_user"),
-    url(r'^register$', 'student.views.register_user', name="register_user"),
+    url(r'^admin_dashboard$', 'dashboard.views.dashboard'))
 
-    url(r'^admin_dashboard$', 'dashboard.views.dashboard'),
+if settings.LMS_TEST_ENV:
+    urlpatterns += (
+        url(r'^$', 'branding.views.index', name="root"),   # Main marketing page, or redirect to courseware
+        url(r'^dashboard$', 'student.views.dashboard', name="dashboard"),
+        url(r'^login_ajax$', 'student.views.login_user', name="login"),
+        url(r'^login_ajax/(?P<error>[^/]*)$', 'student.views.login_user'),
+        url(r'^login$', 'student.views.signin_user', name="signin_user"),
+        url(r'^register$', 'student.views.register_user', name="register_user"),
+        url(r'^change_email$', 'student.views.change_email_request', name="change_email"),
+        url(r'^email_confirm/(?P<key>[^/]*)$', 'student.views.confirm_email_change'),
+        url(r'^change_name$', 'student.views.change_name_request', name="change_name"),
+        url(r'^accept_name_change$', 'student.views.accept_name_change'),
+        url(r'^reject_name_change$', 'student.views.reject_name_change'),
+        url(r'^pending_name_changes$', 'student.views.pending_name_changes'))
 
-    url(r'^change_email$', 'static_template_view.views.render_404', name="change_email"),
-    url(r'^email_confirm/(?P<key>[^/]*)$', 'static_template_view.views.render_404'),
-    url(r'^change_name$', 'static_template_view.views.render_404', name="change_name"),
-    url(r'^accept_name_change$', 'static_template_view.views.render_404'),
-    url(r'^reject_name_change$', 'static_template_view.views.render_404'),
-    url(r'^pending_name_changes$', 'static_template_view.views.render_404'),
+urlpatterns += (
     url(r'^event$', 'track.views.user_track'),
+    url(r'^segmentio/event$', 'track.views.segmentio.segmentio_event'),
     url(r'^t/(?P<template>[^/]*)$', 'static_template_view.views.index'),   # TODO: Is this used anymore? What is STATIC_GRAB?
+)
 
-    url(r'^accounts/login$', 'static_template_view.views.render_404', name="accounts_login"),
-    url(r'^accounts/manage_user_standing', 'static_template_view.views.render_404', name='manage_user_standing'),
-    url(r'^accounts/disable_account_ajax$', 'static_template_view.views.render_404',
-        name="disable_account_ajax"),
+if settings.LMS_TEST_ENV:
+    urlpatterns += (
+        url(r'^accounts/login$', 'student.views.accounts_login', name="accounts_login"),
+        url(r'^accounts/manage_user_standing', 'student.views.manage_user_standing',
+            name='manage_user_standing'),
+        url(r'^accounts/disable_account_ajax$', 'student.views.disable_account_ajax',
+            name="disable_account_ajax"),
 
-    url(r'^login_ajax$', 'static_template_view.views.render_404', name="login"),
-    url(r'^login_ajax/(?P<error>[^/]*)$', 'static_template_view.views.render_404'),
-    url(r'^logout$', 'static_template_view.views.render_404', name='logout'),
-    url(r'^create_account$', 'static_template_view.views.render_404', name='create_account'),
-    url(r'^activate/(?P<key>[^/]*)$', 'static_template_view.views.render_404', name="activate"),
+        url(r'^logout$', 'student.views.logout_user', name='logout'),
+        url(r'^create_account$', 'student.views.create_account', name='create_account'),
+        url(r'^activate/(?P<key>[^/]*)$', 'student.views.activate_account', name="activate"),
 
-    url(r'^password_reset/$', 'static_template_view.views.render_404', name='password_reset'),
-    ## Obsolete Django views for password resets
-    ## TODO: Replace with Mako-ized views
-    url(r'^password_change/$', 'static_template_view.views.render_404',
-        name='auth_password_change'),
-    url(r'^password_change_done/$', 'static_template_view.views.render_404',
-        name='auth_password_change_done'),
-    url(r'^password_reset_confirm/(?P<uidb36>[0-9A-Za-z]+)-(?P<token>.+)/$',
-        'static_template_view.views.render_404',
-        name='auth_password_reset_confirm'),
-    url(r'^password_reset_complete/$', 'static_template_view.views.render_404',
-        name='auth_password_reset_complete'),
-    url(r'^password_reset_done/$', 'static_template_view.views.render_404',
-        name='auth_password_reset_done'),
-
+        url(r'^password_reset/$', 'student.views.password_reset', name='password_reset'),
+        ## Obsolete Django views for password resets
+        ## TODO: Replace with Mako-ized views
+        url(r'^password_change/$', django.contrib.auth.views.password_change,
+            name='auth_password_change'),
+        url(r'^password_change_done/$', django.contrib.auth.views.password_change_done,
+            name='auth_password_change_done'),
+        url(r'^password_reset_confirm/(?P<uidb36>[0-9A-Za-z]+)-(?P<token>.+)/$',
+            'student.views.password_reset_confirm_wrapper',
+            name='auth_password_reset_confirm'),
+        url(r'^password_reset_complete/$', django.contrib.auth.views.password_reset_complete,
+            name='auth_password_reset_complete'),
+        url(r'^password_reset_done/$', django.contrib.auth.views.password_reset_done,
+            name='auth_password_reset_done'))
+else:
+    u
+urlpatterns += (
     url(r'^heartbeat$', include('heartbeat.urls')),
 
-    url(r'^user_api/', include('user_api.urls')),
+    url(r'^user_api/', include('openedx.core.djangoapps.user_api.urls')),
+
+    url(r'^notifier_api/', include('notifier_api.urls')),
 
     url(r'^lang_pref/', include('lang_pref.urls')),
-
-    url(r'^', include('waffle.urls')),
 
     url(r'^i18n/', include('django.conf.urls.i18n')),
 
@@ -70,7 +80,22 @@ urlpatterns = ('',  # nopep8
 
     # Feedback Form endpoint
     url(r'^submit_feedback$', 'util.views.submit_feedback'),
+
+    # Enrollment API RESTful endpoints
+    url(r'^api/enrollment/v1/', include('enrollment.urls')),
+
+    # CourseInfo API RESTful endpoints
+    url(r'^api/course/details/v0/', include('course_about.urls')),
+
 )
+
+if settings.FEATURES["ENABLE_MOBILE_REST_API"]:
+    urlpatterns += (
+        url(r'^api/mobile/v0.5/', include('mobile_api.urls')),
+        # Video Abstraction Layer used to allow video teams to manage video assets
+        # independently of courseware. https://github.com/edx/edx-val
+        url(r'^api/val/v0/', include('edxval.urls')),
+    )
 
 # if settings.FEATURES.get("MULTIPLE_ENROLLMENT_ROLES"):
 urlpatterns += (
@@ -111,35 +136,39 @@ favicon_path = microsite.get_value('favicon_path', settings.FAVICON_PATH)
 urlpatterns += ((
     r'^favicon\.ico$',
     'django.views.generic.simple.redirect_to',
-    {'url':  settings.STATIC_URL + favicon_path}
+    {'url': settings.STATIC_URL + favicon_path}
 ),)
 
 # Semi-static views only used by edX, not by themes
 if not settings.FEATURES["USE_CUSTOM_THEME"]:
-    urlpatterns += (
-        url(r'^jobs$', 'static_template_view.views.render_404',
-            {'template': 'jobs.html'}, name="jobs"),
-        url(r'^press$', 'static_template_view.views.render_404', name="press"),
-        url(r'^media-kit$', 'static_template_view.views.render_404',
-            {'template': 'media-kit.html'}, name="media-kit"),
-        url(r'^faq$', 'static_template_view.views.render_404',
-            {'template': 'faq.html'}, name="faq_edx"),
-        url(r'^help$', 'static_template_view.views.render_404',
-            {'template': 'help.html'}, name="help_edx"),
+    if settings.LMS_TEST_ENV:
+        urlpatterns += (
+            url(r'^blog$', 'static_template_view.views.render',
+                {'template': 'blog.html'}, name="blog"),
+            url(r'^contact$', 'static_template_view.views.render',
+                {'template': 'contact.html'}, name="contact"),
+            url(r'^donate$', 'static_template_view.views.render',
+                {'template': 'donate.html'}, name="donate"),
+            url(r'^faq$', 'static_template_view.views.render',
+                {'template': 'faq.html'}, name="faq"),
+            url(r'^help$', 'static_template_view.views.render',
+                {'template': 'help.html'}, name="help_edx"),
+            url(r'^jobs$', 'static_template_view.views.render',
+                {'template': 'jobs.html'}, name="jobs"),
+            url(r'^news$', 'static_template_view.views.render',
+                {'template': 'news.html'}, name="news"),
+            url(r'^press$', 'static_template_view.views.render',
+                {'template': 'press.html'}, name="press"),
+            url(r'^media-kit$', 'static_template_view.views.render',
+                {'template': 'media-kit.html'}, name="media-kit"),
 
-        # TODO: (bridger) The copyright has been removed until it is updated for edX
-        # url(r'^copyright$', 'static_template_view.views.render',
-        #     {'template': 'copyright.html'}, name="copyright"),
+            # TODO: (bridger) The copyright has been removed until it is updated for edX
+            # url(r'^copyright$', 'static_template_view.views.render',
+            #     {'template': 'copyright.html'}, name="copyright"),
 
-        # Press releases
-        url(r'^press/([_a-zA-Z0-9-]+)$', 'static_template_view.views.render_404', name='press_release'),
-
-        # Favicon
-        (r'^favicon\.ico$', 'django.views.generic.simple.redirect_to', {'url': '/static/images/favicon.ico'}),
-
-        url(r'^submit_feedback$', 'static_template_view.views.render_404'),
-
-    )
+            # Press releases
+            url(r'^press/([_a-zA-Z0-9-]+)$', 'static_template_view.views.render_press_release', name='press_release'),
+        )
 
 # Only enable URLs for those marketing links actually enabled in the
 # settings. Disable URLs by marking them as None.
@@ -223,8 +252,10 @@ if settings.COURSEWARE_ENABLED:
         # TODO: We should probably remove the circuit package. I believe it was only used in the old way of saving wiki circuits for the wiki
         # url(r'^edit_circuit/(?P<circuit>[^/]*)$', 'circuit.views.edit_circuit'),
         # url(r'^save_circuit/(?P<circuit>[^/]*)$', 'circuit.views.save_circuit'),
-
-        url(r'^courses/?$', 'static_template_view.views.render_404', name="courses"),
+        url(r'^courses/?$', 'branding.views.courses', name="courses")
+        )
+    if
+    urlpatterns += (
         url(r'^change_enrollment$',
             'student.views.change_enrollment', name="change_enrollment"),
         url(r'^change_email_settings$', 'student.views.change_email_settings', name="change_email_settings"),
@@ -246,6 +277,10 @@ if settings.COURSEWARE_ENABLED:
             'courseware.views.course_info', name="info"),
         url(r'^courses/{}/syllabus$'.format(settings.COURSE_ID_PATTERN),
             'courseware.views.syllabus', name="syllabus"),   # TODO arjun remove when custom tabs in place, see courseware/courses.py
+
+        #Survey associated with a course
+        url(r'^courses/{}/survey$'.format(settings.COURSE_ID_PATTERN),
+            'courseware.views.course_survey', name="course_survey"),
 
         url(r'^courses/{}/book/(?P<book_index>\d+)/$'.format(settings.COURSE_ID_PATTERN),
             'staticbook.views.index', name="book"),
@@ -321,22 +356,19 @@ if settings.COURSEWARE_ENABLED:
             'open_ended_grading.views.take_action_on_flags', name='open_ended_flagged_problems_take_action'),
 
         # Cohorts management
-        url(r'^courses/{}/cohorts$'.format(settings.COURSE_KEY_PATTERN),
-            'course_groups.views.list_cohorts', name="cohorts"),
-        url(r'^courses/{}/cohorts/add$'.format(settings.COURSE_KEY_PATTERN),
-            'course_groups.views.add_cohort',
-            name="add_cohort"),
+        url(r'^courses/{}/cohorts/(?P<cohort_id>[0-9]+)?$'.format(settings.COURSE_KEY_PATTERN),
+            'openedx.core.djangoapps.course_groups.views.cohort_handler', name="cohorts"),
         url(r'^courses/{}/cohorts/(?P<cohort_id>[0-9]+)$'.format(settings.COURSE_KEY_PATTERN),
-            'course_groups.views.users_in_cohort',
+            'openedx.core.djangoapps.course_groups.views.users_in_cohort',
             name="list_cohort"),
         url(r'^courses/{}/cohorts/(?P<cohort_id>[0-9]+)/add$'.format(settings.COURSE_KEY_PATTERN),
-            'course_groups.views.add_users_to_cohort',
+            'openedx.core.djangoapps.course_groups.views.add_users_to_cohort',
             name="add_to_cohort"),
         url(r'^courses/{}/cohorts/(?P<cohort_id>[0-9]+)/delete$'.format(settings.COURSE_KEY_PATTERN),
-            'course_groups.views.remove_user_from_cohort',
+            'openedx.core.djangoapps.course_groups.views.remove_user_from_cohort',
             name="remove_from_cohort"),
         url(r'^courses/{}/cohorts/debug$'.format(settings.COURSE_KEY_PATTERN),
-            'course_groups.views.debug_cohort_mgmt',
+            'openedx.core.djangoapps.course_groups.views.debug_cohort_mgmt',
             name="debug_cohort_mgmt"),
 
         # Open Ended Notifications
@@ -352,12 +384,21 @@ if settings.COURSEWARE_ENABLED:
         # LTI endpoints listing
         url(r'^courses/{}/lti_rest_endpoints/'.format(settings.COURSE_ID_PATTERN),
             'courseware.views.get_course_lti_endpoints', name='lti_rest_endpoints'),
+
+        # Student account and profile
+        url(r'^account/', include('student_account.urls')),
+        url(r'^profile/', include('student_profile.urls')),
+
+        # Student Notes
+        url(r'^courses/{}/edxnotes'.format(settings.COURSE_ID_PATTERN),
+            include('edxnotes.urls'), name="edxnotes_endpoints"),
     )
 
     # allow course staff to change to student view of courseware
     if settings.FEATURES.get('ENABLE_MASQUERADE'):
         urlpatterns += (
-            url(r'^masquerade/(?P<marg>.*)$', 'courseware.masquerade.handle_ajax', name="masquerade-switch"),
+            url(r'^courses/{}/masquerade$'.format(settings.COURSE_KEY_PATTERN),
+                'courseware.masquerade.handle_ajax', name="masquerade_update"),
         )
 
     # discussion forums live within courseware, so courseware must be enabled first
@@ -389,8 +430,6 @@ if settings.COURSEWARE_ENABLED:
 
 if settings.COURSEWARE_ENABLED and settings.FEATURES.get('ENABLE_INSTRUCTOR_LEGACY_DASHBOARD'):
     urlpatterns += (
-        url(r'^courses/{}/legacy_grade_summary$'.format(settings.COURSE_ID_PATTERN),
-            'instructor.views.legacy.grade_summary', name='grade_summary_legacy'),
         url(r'^courses/{}/legacy_instructor_dash$'.format(settings.COURSE_ID_PATTERN),
             'instructor.views.legacy.instructor_dashboard', name="instructor_dashboard_legacy"),
     )
@@ -436,6 +475,10 @@ urlpatterns += (
     url(r'^shoppingcart/', include('shoppingcart.urls')),
 )
 
+# Survey Djangoapp
+urlpatterns += (
+    url(r'^survey/', include('survey.urls')),
+)
 
 if settings.FEATURES.get('AUTH_USE_OPENID_PROVIDER'):
     urlpatterns += (
@@ -444,6 +487,12 @@ if settings.FEATURES.get('AUTH_USE_OPENID_PROVIDER'):
         url(r'^openid/provider/identity/$', 'external_auth.views.provider_identity', name='openid-provider-identity'),
         url(r'^openid/provider/xrds/$', 'external_auth.views.provider_xrds', name='openid-provider-xrds')
     )
+
+if settings.FEATURES.get('ENABLE_OAUTH2_PROVIDER'):
+    urlpatterns += (
+        url(r'^oauth2/', include('oauth2_provider.urls', namespace='oauth2')),
+    )
+
 
 if settings.FEATURES.get('ENABLE_LMS_MIGRATION'):
     urlpatterns += (
@@ -508,12 +557,17 @@ if settings.FEATURES.get('AUTOMATIC_AUTH_FOR_TESTING'):
 if settings.FEATURES.get('ENABLE_THIRD_PARTY_AUTH'):
     urlpatterns += (
         url(r'', include('third_party_auth.urls')),
+        url(r'^login_oauth_token/(?P<backend>[^/]+)/$', 'student.views.login_oauth_token'),
     )
+
 
 urlpatterns = patterns(*urlpatterns)
 
 if settings.DEBUG:
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
+
+    # in debug mode, allow any template to be rendered (most useful for UX reference templates)
+    urlpatterns += url(r'^template/(?P<template>.+)$', 'debug.views.show_reference_template'),
 
 #Custom error pages
 handler404 = 'static_template_view.views.render_404'
@@ -521,8 +575,8 @@ handler500 = 'static_template_view.views.render_500'
 
 # display error page templates, for testing purposes
 urlpatterns += (
-    url(r'404', handler404),
-    url(r'500', handler500),
+    url(r'404', 'static_template_view.views.render_404'),
+    url(r'500', 'static_template_view.views.render_404'),
 )
 
 urlpatterns += (

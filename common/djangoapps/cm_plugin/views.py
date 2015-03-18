@@ -1,3 +1,7 @@
+from django.db import IntegrityError, DatabaseError
+from xmodule.modulestore.django import modulestore
+from xmodule.course_module import CourseDescriptor
+from courseware.courses import get_course
 from django.http import HttpResponseNotFound, HttpResponse
 from contentstore.views.course import _create_or_rerun_course
 from django.views.decorators.csrf import csrf_exempt
@@ -5,21 +9,20 @@ from util.json_request import expect_json
 from student.views import _do_create_account
 from django.contrib.auth.models import User
 from student import auth
-from student.models import CourseEnrollment
+from student.models import CourseEnrollment, CourseAccessRole
 from student.roles import CourseInstructorRole
 from student.views import AccountValidationError
 from student.tests.factories import AdminFactory
-from courseware.courses import get_course
+from courseware.models import StudentModule
 from contentstore.utils import delete_course_and_groups
-from django.db import IntegrityError
-from xmodule.modulestore.django import modulestore
-from xmodule.course_module import CourseDescriptor
 from contentstore.views.user import CannotOrphanCourse, try_remove_instructor
 from opaque_keys.edx.locations import SlashSeparatedCourseKey
+from opaque_keys.edx.keys import CourseKey
+from opaque_keys import InvalidKeyError
 import json
 import logging
 from edxmako.shortcuts import render_to_response
-import urllib
+from util.json_request import JsonResponse
 from .healthcheck import check_services
 from .token import validate_token
 
@@ -51,6 +54,7 @@ def cm_enroll_user(request):
                 return HttpResponse(content=json.dumps({'errors':'Missing params'}), \
                         content_type = 'application/json', status=400)
             try:
+                log.info("Enrolling user: " + request.json.get('email') + " course: " + request.json.get('course_id'))
                 CourseEnrollment.enroll_by_email(request.json.get('email'), \
                                                  get_key_from_course_id(request.json.get('course_id')), ignore_errors=False)
 
@@ -99,6 +103,7 @@ def cm_unenroll_user(request):
                         content_type = 'application/json', status=400)
 	
             try:	
+                log.info("Unenrolling user: " + request.json.get('email') + " course: " + request.json.get('course_id'))
                 user = User.objects.get(email=request.json.get('email'))
 	        request.user = user
 	    except User.DoesNotExist:
@@ -116,13 +121,20 @@ def cm_unenroll_user(request):
                 except CannotOrphanCourse as oops:
                     log.warn("last course admin removal attempted: %s", str(user))
                     return JsonResponse(oops.msg, 400)
- 	    else:
-	        log.info("student unenroll: %s", str(user))
-                CourseEnrollment.unenroll_by_email(request.json.get('email'), \
-                             get_key_from_course_id(request.json.get('course_id')))
+            else:
+                log.info("student unenroll: %s", str(user))
+                try:
+                    CourseEnrollment.unenroll(user, get_key_from_course_id(request.json.get('course_id')))
+                    status_code = 200
+                except DatabaseError:
+                    # this is just for tests. This error will never be hit in production
+                    # should probably consider moving cm_plugin out of common too.
+                    log.error("Unenroll failed for user: %s from course: %s", request.json.get('email'), request.json.get('course_id'))
+                    pass
 
-            content = {'success':'ok'}
             status_code = 200
+            content = {'success':'ok'}
+
             log.info("Unenrolled user: %s from course: %s", request.json.get('email'), request.json.get('course_id'))
             return HttpResponse(content=json.dumps(content), status=status_code, content_type='application/json')
         else:
@@ -156,8 +168,9 @@ def cm_create_new_user(request):
                     content = {'id':ret[0].email}
                     status_code = 200
             except AccountValidationError:
-                    content = {'errors':'Data Integrity Error'}
-                    status_code = 422
+                    user = User.objects.get(email=request.json.get('email'))
+                    content = {'id': user.email}
+                    status_code = 200
             except:
                     content = {'errors':'Bad Request'}
                     status_code = 400
@@ -184,3 +197,64 @@ def healthcheck(request):
         result = {'status': 'alive'}
 
     return HttpResponse(content=json.dumps(result), status=200, content_type="application/json")
+
+
+@csrf_exempt
+@expect_json
+def cm_course_delete(request, course_id = None):
+    response_format = request.REQUEST.get('format','html')
+    if response_format == 'json' or 'application/json' in request.META.get('HTTP/ACCEPT', 'application/json'):
+        if request.method == 'POST':
+            if validate_token(request.body, request) == False:
+                log.warn("Unauthorized access made by course: %s, user: %s", request.json.get('email'))
+                return HttpResponse('Unauthorized', status=401)
+
+            email = request.json.get('email')
+            try:
+                instructor = User.objects.get(email = email)
+                request.user = instructor
+            except User.DoesNotExist:
+                log.error("course deletion attempted by unregistered user: %s", email)
+                return JsonResponse(json.dumps({ 'error': 'course deletion attempted by unregistered user' }), status = 400)
+
+            if course_id == None:
+                return JsonResponse(json.dumps({'error': 'Course ID does not exist'}), status = 404)
+
+            try:
+                course_key = CourseKey.from_string(course_id)
+            except InvalidKeyError:
+                try:
+                    course_key = SlashSeparatedCourseKey.from_deprecated_string(course_id)
+                except InvalidKeyError:
+                    course_key = None
+
+            if course_key == None:
+                return JsonResponse(json.dumps({'error': 'Course Key not found for course id: ' + str(course_id)}), status = 404)
+
+            if not auth.has_access(instructor, CourseInstructorRole(course_key)):
+                log.error("course deletion attempted by unauthorized user: %s", email)
+                return JsonResponse(json.dumps({'error': 'course deletion attempted by unauthorized user'}), status = 401)
+
+            try:
+                delete_course_and_groups(course_key, instructor.id)
+                try:
+                    StudentModule.objects.filter(course_id=course_key).delete()
+                except:
+                    # We need this for testing. The above mentioned model lives in
+                    # LMS but our tests are executed via CMS. This piece of code
+                    # makes sure that the test safely skips over this and runs
+                    # successfully.
+                    pass
+                CourseEnrollment.objects.filter(course_id=course_key).delete()
+                try:
+                    CourseAccessRole.objects.get(course_id=course_key).delete()
+                except CourseAccessRole.DoesNotExist:
+                    pass
+            except Exception as e:
+                return JsonResponse(json.dumps({'error' : str(e)}), status = 500)
+
+            return JsonResponse(json.dumps({'message': "successfully deleted course"}), status = 200)
+        else:
+            return JsonResponse(json.dumps({}), status=404)
+    else:
+        return JsonResponse(content=json.dumps({}), status=404)

@@ -17,7 +17,7 @@ You should have received a copy of the GNU General Public License
 along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
-//The name of the plugin that the user will write in the html
+// The name of the plugin that the user will write in the html
 window.CatchAnnotation = ("CatchAnnotation" in window) ? CatchAnnotation : {};
 window.CatchSources = ("CatchSources" in window) ? CatchSources : {};
 
@@ -284,7 +284,7 @@ CatchAnnotation = function (element, options) {
     var defaultOptions = {
         media: 'text',
         userId: '', // this is an integer and its value is the userId to see user annotations
-        externalLink: false,//This is true if you want to open the link in a new URL. However, it is false if you want to open the url in the same page
+        externalLink: false, // This is true if you want to open the link in a new URL. However, it is false if you want to open the url in the same page
         showMediaSelector: true, // whether show the selector of Media Annotations or not
         showPublicPrivate: true, // Whether show Public or Private Annotation Selector
         pagination: 50, // Number of Annotations per load in the pagination
@@ -352,15 +352,15 @@ CatchAnnotation.prototype = {
         // if the default tab is instructor, we must refresh the catch to pull the ones
         // under the instructor's email. Calling changeUserId will update this.options.userId
         // and most importantly refresh not only the highlights (from Annotator) 
-        // but also the table below from the annotations database server (called Catch). 
-        if(this.options.default_tab.toLowerCase() == 'instructor'){
+        // but also the table below from the annotations database server (called Catch).
+        if(this.options.default_tab.toLowerCase() === 'instructor') {
             this.changeUserId(this.options.instructor_email);
         }
     },
 //    
 //     GLOBAL UTILITIES
 // 
-    getTemplate: function(templateName){
+    getTemplate: function(templateName) {
         return this.TEMPLATES[templateName]() || '';
     },
     refreshCatch: function(newInstance) {
@@ -372,18 +372,18 @@ CatchAnnotation.prototype = {
         var self = this;
         var newInstance = newInstance || false;
         annotations.forEach(function(annotation) {
-            var isMedia = annotation.media==self.options.media;
-            var isUser = (typeof self.options.userId!='undefined' && self.options.userId!='' && self.options.userId!=null)?
-                    self.options.userId == annotation.user.id:true;
+            var isMedia = annotation.media === self.options.media;
+            var isUser = (typeof self.options.userId !== 'undefined' && self.options.userId !== '' && self.options.userId !== null)?
+                    self.options.userId === annotation.user.id:true;
             var isInList = newInstance?false:self._isInList(annotation);
-            if (isMedia && isUser && !isInList){
+            if (isMedia && isUser && !isInList) {
                 var item = jQuery.extend(true, {}, annotation);
                 self._formatCatch(item);
                 
                 // Authorized
                 var permissions = self.annotator.plugins.Permissions;
-                var authorized = permissions.options.userAuthorize('delete', annotation,permissions.user);
-                var updateAuthorized = permissions.options.userAuthorize('update', annotation,permissions.user);
+                var authorized = permissions.options.userAuthorize('delete', annotation, permissions.user);
+                var updateAuthorized = permissions.options.userAuthorize('update', annotation, permissions.user);
                 
                 item.authToDeleteButton = authorized;
                 item.authToEditButton = updateAuthorized;
@@ -401,8 +401,8 @@ CatchAnnotation.prototype = {
             }
         });
         
-        if (newInstance){
-            var videoFormat = (mediaType === "video") ? true:false;
+        if (newInstance) {
+            var videoFormat = (mediaType === "video") ? true : false;
             var publicPrivateTemplate = '';
             if (self.options.showPublicPrivate) {
                 var templateName = this.options.instructor_email ? 
@@ -415,7 +415,7 @@ CatchAnnotation.prototype = {
                 PublicPrivate: this.getTemplate(templateName),
                 MediaSelector: self.options.showMediaSelector?self.TEMPLATES.annotationMediaSelector():'',
             }));
-        }else{
+        } else {
             var list = $("#mainCatch .annotationList");
             annotationItems.forEach(function(annotation) {
                 list.append($(annotation));
@@ -426,13 +426,13 @@ CatchAnnotation.prototype = {
         var SelButtons = el.find('.annotationList li').removeClass('active'); // reset
         for (var index=0;index<SelButtons.length;index++) {
             var span = $(SelButtons[index]);
-            if (span.attr("media")==this.options.media) $(SelButtons[index]).addClass('active');
+            if (span.attr("media") === this.options.media) $(SelButtons[index]).addClass('active');
         }
         // Set PublicPrivate
         var PublicPrivateButtons = el.find('.annotationListButtons .PublicPrivate').removeClass('active'); // reset
         for (var index=0;index<PublicPrivateButtons.length;index++) {
             var span = $(PublicPrivateButtons[index]).find('span');
-            if (span.html().toLowerCase()==self.current_tab.toLowerCase()) {
+            if (span.html().toLowerCase() === self.current_tab.toLowerCase()) {
                 switch (self.current_tab.toLowerCase()){
                     case 'public':
                         self.options.userId = '';
@@ -466,51 +466,59 @@ CatchAnnotation.prototype = {
         var onClearSearchButtonClick = this.__bind(this._onClearSearchButtonClick, this);
         var onDeleteReplyButtonClick = this.__bind(this._onDeleteReplyButtonClick, this);
         var onZoomToImageBoundsButtonClick = this.__bind(this._onZoomToImageBoundsButtonClick, this);
-    
-        // Open Button
+        var openLoadingGIF = this.__bind(this.openLoadingGIF, this);
+        //Open Button
         el.on("click", ".annotationItem .annotationRow", openAnnotationItem);
         // Close Button
         el.on("click", ".annotationItem .detailHeader", closeAnnotationItem);
         // Geolocation button
-        el.on("click",".annotationItem .detailHeader .geolocationIcon img", onGeolocationClick);
+        el.on("click", ".annotationItem .detailHeader .geolocationIcon img", onGeolocationClick);
         // controlPanel buttons
-        el.on("click",".annotationItem .annotationDetail .controlPanel", onShareControlsClick);
+        el.on("click", ".annotationItem .annotationDetail .controlPanel", onShareControlsClick);
         // VIDEO
-        if (this.options.media=='video') {
+        if (this.options.media === 'video') {
             // PlaySelection button
-            el.on("click",".annotationItem .annotationDetail .playMediaButton", onPlaySelectionClick);
+            el.on("click", ".annotationItem .annotationDetail .playMediaButton", onPlaySelectionClick);
         }
         // TEXT
-        if (this.options.media=='text') {
+        if (this.options.media === 'text') {
             // PlaySelection button
-            el.on("click",".annotationItem .annotationDetail .quote", onQuoteMediaButton);
+            el.on("click", ".annotationItem .annotationDetail .quote", onQuoteMediaButton);
         }
 
         // IMAGE
-        if (this.options.media=='image') {
+        if (this.options.media === 'image') {
             // PlaySelection button
-            el.on("click",".annotationItem .annotationDetail .zoomToImageBounds", onZoomToImageBoundsButtonClick);
+            el.on("click", ".annotationItem .annotationDetail .zoomToImageBounds", onZoomToImageBoundsButtonClick);
         }
         
         // controlReplies
-        el.on("click",".annotationItem .controlReplies", onControlRepliesClick);
+        el.on("click", ".annotationItem .controlReplies", onControlRepliesClick);
         
         // Selection Buttons
-        el.on("click",".annotationList li", onSelectionButtonClick);
+        el.on("click", ".annotationList li", onSelectionButtonClick);
         // PublicPrivate Buttons
-        el.on("click",".annotationListButtons .PublicPrivate", onPublicPrivateButtonClick);
+        el.on("click", ".annotationListButtons .PublicPrivate", onPublicPrivateButtonClick);
         // More Button
-        el.on("click",".annotationListButtons .moreButtonCatch", onMoreButtonClick);
+        el.on("click", ".annotationListButtons .moreButtonCatch", onMoreButtonClick);
         
         // Search Button
-        el.on("click",".searchbox .search-icon", onSearchButtonClick);
+        el.on("click", ".searchbox .search-icon", onSearchButtonClick);
+        // Search should also run when user hits ENTER
+        $('input[name=search]').keyup(function(e) {
+            // ENTER == 13
+            if(e.which == 13) {
+                onSearchButtonClick();
+            }
+        });
 
         // Clear Search Button
-        el.on("click",".searchbox .clear-search-icon", onClearSearchButtonClick);
+        el.on("click", ".searchbox .clear-search-icon", onClearSearchButtonClick);
         
         // Delete Reply Button
         el.on("click", ".replies .replyItem .deleteReply", onDeleteReplyButtonClick);
         
+        el.on("click", ".annotationListButtons .PublicPrivate", openLoadingGIF);
     },
     changeMedia: function(media) {
         var media = media || 'text';
@@ -544,10 +552,12 @@ CatchAnnotation.prototype = {
             // if the options.userID (i.e. the value we are searching for) is empty signifying
             // public or is equal to the person with update access, then we leave it alone,
             // otherwise we need to clean them up (i.e. disable them).
-            if(self.options.userId !== '' && self.options.userId !== value.permissions.update[0]){
-                $.each(value.highlights, function(key1, value1){
-                    $(value1).removeClass('annotator-hl');
-                });
+            if (self.options.userId !== '' && self.options.userId !== value.permissions.update[0]) {
+                if (value.highlights !== undefined) {
+                    $.each(value.highlights, function(key1, value1){
+                        $(value1).removeClass('annotator-hl');
+                    });
+                }
             }
         });
     },
@@ -555,7 +565,7 @@ CatchAnnotation.prototype = {
         var annotator = this.annotator;
         var loadFromSearch = annotator.plugins.Store.options.loadFromSearch;
         var loadedAn = this.element.find('.annotationList .annotationItem').length;
-        loadedAn = typeof loadedAn!='undefined' ?loadedAn:0;
+        loadedAn = typeof loadedAn !== 'undefined' ?loadedAn:0;
         
         loadFromSearch.limit = this.options.pagination;
         loadFromSearch.offset = loadedAn;
@@ -577,7 +587,7 @@ CatchAnnotation.prototype = {
     },
             
     // check whether is necessary to have a more button or not
-    checkTotAnnotations: function(){
+    checkTotAnnotations: function() {
         var annotator = this.annotator;
         var loadFromSearch = annotator.plugins.Store.options.loadFromSearch;
         var oldLimit = loadFromSearch.limit;
@@ -588,7 +598,7 @@ CatchAnnotation.prototype = {
         loadFromSearch.offset = 0;
         loadFromSearch.media = this.options.media;
         loadFromSearch.userid = this.options.userId;
-        var onSuccess = function(response){
+        var onSuccess = function(response) {
             var totAn = self.element.find('.annotationList .annotationItem').length;
             var maxAn = response.total;
             var moreBut = self.element.find('.annotationListButtons .moreButtonCatch');
@@ -620,46 +630,46 @@ CatchAnnotation.prototype = {
 //    
 //     LOCAL UTILITIES
 // 
-    _subscribeAnnotator: function(){
+    _subscribeAnnotator: function() {
         var self = this;
         var annotator = this.annotator;
         // Subscribe to Annotator changes
-        annotator.subscribe("annotationsLoaded", function (annotations){
+        annotator.subscribe("annotationsLoaded", function (annotations) {
             self.cleanUpAnnotations();
             self.refreshCatch(self.clean);
             // hide or show more button
             self.checkTotAnnotations();
         });
-        annotator.subscribe("annotationUpdated", function (annotation){
+        annotator.subscribe("annotationUpdated", function (annotation) {
             self.refreshCatch(true);
             self.checkTotAnnotations();
         });
-        annotator.subscribe("annotationDeleted", function (annotation){
+        annotator.subscribe("annotationDeleted", function (annotation) {
             var annotations = annotator.plugins['Store'].annotations;
-            var tot = typeof annotations !='undefined'?annotations.length:0;
+            var tot = typeof annotations !== 'undefined' ?annotations.length : 0;
             var attempts = 0; // max 100
-            if(annotation.media == "image"){
+            if(annotation.media === "image") {
                 self.refreshCatch(true);
                 self.checkTotAnnotations();
             } else {
             // This is to watch the annotations object, to see when is deleted the annotation
-                var ischanged = function(){
+                var ischanged = function() {
                     var new_tot = annotator.plugins['Store'].annotations.length;
                     if (attempts<100)
-                        setTimeout(function(){
-                            if (new_tot != tot){
+                        setTimeout(function() {
+                            if (new_tot !== tot) {
                                 self.refreshCatch(true);
                                 self.checkTotAnnotations();
-                            }else{
+                            } else {
                                 attempts++;
                                 ischanged();
                             }
-                        },100); // wait for the change in the annotations
+                        }, 100); // wait for the change in the annotations
                 };
                 ischanged();
             }
         });
-        annotator.subscribe("annotationCreated", function (annotation){
+        annotator.subscribe("annotationCreated", function (annotation) {
             var attempts = 0; // max 100
             // There is a delay between calls to the backend--especially reading after
             // writing. This function listens to when a function is created and waits
@@ -667,13 +677,13 @@ CatchAnnotation.prototype = {
             // with it. 
             var ischanged = function(){
                 if (attempts<100)
-                    setTimeout(function(){
-                        if (typeof annotation.id!='undefined'){
+                    setTimeout(function() {
+                        if (typeof annotation.id !== 'undefined'){
                         
                             // once it gets the annotation id, the table refreshes to show
                             // the edits
                             self.refreshCatch();
-                            if (typeof annotation.parent != 'undefined' && annotation.parent != '0'){
+                            if (typeof annotation.parent !== 'undefined' && annotation.parent !== '0'){
                                 
                                 // if annotation made was actually a replay to an annotation
                                 // i.e. the only difference is that annotations that are
@@ -686,16 +696,16 @@ CatchAnnotation.prototype = {
                                 replies.click();
                                 replies.click();
                             }
-                        }else{
+                        } else {
                             attempts++;
                             ischanged();
                         }
-                    },100); // wait for annotation id
+                    }, 100); // wait for annotation id
             };
             ischanged();
         });
     },
-    __bind: function(fn, me){ return function(){ return fn.apply(me, arguments); }; },
+    __bind: function(fn, me) { return function(){ return fn.apply(me, arguments); }; },
     _compileTemplates: function() {
         var self = this;
         // Change the html tags to functions 
@@ -703,12 +713,12 @@ CatchAnnotation.prototype = {
             self.TEMPLATES[templateName] = Handlebars.compile(self.HTMLTEMPLATES[templateName]);
         });
     },
-    _isVideoJS: function (an){
+    _isVideoJS: function (an) {
         var annotator = this.annotator;
         var rt = an.rangeTime;
-        var isOpenVideojs = (typeof annotator.mplayer != 'undefined');
-        var isVideo = (typeof an.media!='undefined' && an.media=='video');
-        var isNumber = (typeof rt!='undefined' && !isNaN(parseFloat(rt.start)) && isFinite(rt.start) && !isNaN(parseFloat(rt.end)) && isFinite(rt.end));
+        var isOpenVideojs = (typeof annotator.mplayer !== 'undefined');
+        var isVideo = (typeof an.media !== 'undefined' && an.media === 'video');
+        var isNumber = (typeof rt !== 'undefined' && !isNaN(parseFloat(rt.start)) && isFinite(rt.start) && !isNaN(parseFloat(rt.end)) && isFinite(rt.end));
         return (isOpenVideojs && isVideo && isNumber);
     },
     _isInList: function (an){
@@ -716,7 +726,7 @@ CatchAnnotation.prototype = {
         var isInList = false;
         var list = $('#mainCatch .annotationList .annotationRow.item');
         for (_i = 0, _len = list.length; _i < _len; _i++) {
-             if ($(list[_i]).parent().attr('annotationid') == an.id)
+             if (parseInt($(list[_i]).parent().attr('annotationid'), 10) === an.id)
                   isInList = true;
         }
         return isInList;
@@ -724,24 +734,28 @@ CatchAnnotation.prototype = {
     _formatCatch: function(item) {
         var item = item || {};
         
-        if(this._isVideoJS(item)){
+        if (this._isVideoJS(item)) {
             // format time
-            item.rangeTime.start= typeof vjs!='undefined'?vjs.formatTime(item.rangeTime.start):item.rangeTime.start;
-            item.rangeTime.end= typeof vjs!='undefined'?vjs.formatTime(item.rangeTime.end):item.rangeTime.end;
+            item.rangeTime.start= typeof vjs !== 'undefined' ?
+                vjs.formatTime(item.rangeTime.start) :
+                item.rangeTime.start;
+            item.rangeTime.end= typeof vjs !== 'undefined'?
+                vjs.formatTime(item.rangeTime.end) :
+                item.rangeTime.end;
         }
         // format date
-        if(typeof item.updated!='undefined' && typeof createDateFromISO8601!='undefined')
+        if (typeof item.updated !== 'undefined' && typeof createDateFromISO8601 !== 'undefined')
             item.updated = createDateFromISO8601(item.updated);
         // format geolocation
-        if(typeof item.geolocation!='undefined' && (typeof item.geolocation.latitude=='undefined'||item.geolocation.latitude==''))
+        if (typeof item.geolocation !== 'undefined' && (typeof item.geolocation.latitude === 'undefined' || item.geolocation.latitude === ''))
             delete item.geolocation;
         
         /* NEW VARIABLES */
         // set plainText for Catch
         item.plainText = item.text.replace(/&(lt|gt);/g, function (strMatch, p1){
-            return (p1 == "lt")? "<" : ">";
-        });//Change to < and > tags
-        item.plainText = item.plainText.replace(/<\/?[^>]+(>|$)/g, "").replace('&nbsp;',''); // remove all the html tags
+            return (p1 === "lt")? "<" : ">";
+        }); // Change to < and > tags
+        item.plainText = item.plainText.replace(/<\/?[^>]+(>|$)/g, "").replace('&nbsp;', ''); // remove all the html tags
         
         item.mediatypeforgrid = {};
         item.mediatypeforgrid[item.media] = true;
@@ -751,11 +765,10 @@ CatchAnnotation.prototype = {
         };
 
         // Flags
-        if(!this.options.flags && typeof item.tags != 'undefined' && item.tags.length > 0){
-            for(var len=item.tags.length, index = len-1; index >= 0; --index){
+        if (!this.options.flags && typeof item.tags !== 'undefined' && item.tags.length > 0) {
+            for (var len = item.tags.length, index = len-1; index >= 0; --index) {
                 var currTag = item.tags[index];
-                if(currTag.indexOf("flagged-") != -1){
-                    
+                if (currTag.indexOf("flagged-") !== -1) {
                     item.tags.splice(index);
                 }
             }
@@ -776,73 +789,75 @@ CatchAnnotation.prototype = {
                 uri = shareControl.parent().find('.uri').html();
             // remove the last share container
             shareControl.find('.share-container-annotator').remove();
-            shareControl.append(annotator.plugins.Share.buildHTMLShareButton("",idAnnotation));
+            shareControl.append(annotator.plugins.Share.buildHTMLShareButton("", idAnnotation));
             // Set actions button
-            annotator.plugins.Share.buttonsActions(shareControl[0],1,uri);
+            annotator.plugins.Share.buttonsActions(shareControl[0], 1, uri);
         } else {
             $(evt.currentTarget).closest(".annotationItem").removeClass("open").addClass("closed");
         }
     },
    _closeAnnotationItem: function(evt) {
-        var existEvent = typeof evt.target!='undefined' && typeof evt.target.localName!='undefined';
-        if(existEvent && evt.target.parentNode.className!='geolocationIcon'){
+        var existEvent = typeof evt.target !== 'undefined' && typeof evt.target.localName !== 'undefined';
+        if (existEvent && evt.target.parentNode.className !== 'geolocationIcon') {
             this._openAnnotationItem(evt);
         }
    },
    _onGeolocationClick: function(evt) {
         var latitude = $(evt.target).parent().find('.latitude').html();
         var longitude = $(evt.target).parent().find('.longitude').html();
-        var imgSrc = '<img src="http://maps.googleapis.com/maps/api/staticmap?center='+latitude+','+longitude+'&zoom=14&size=500x500&sensor=false&markers=color:green%7Clabel:G%7C'+latitude+','+longitude+'">';
+        var imgSrc = '<img src="http://maps.googleapis.com/maps/api/staticmap?center=' + latitude + ',' + longitude + '&zoom=14&size=500x500&sensor=false&markers=color:green%7Clabel:G%7C' + latitude + ',' + longitude + '">';
         $(evt.target).parents('.detailHeader:first').find('#myLocationMap .map').html(imgSrc);
     },
     _onPlaySelectionClick: function(evt) {
-        var id = $(evt.target).find('.idAnnotation').html();
+        var id = parseInt($(evt.target).find('.idAnnotation').html(), 10);
         var uri = $(evt.target).find('.uri').html();
         var container = $(evt.target).find('.container').html();
-        if(this.options.externalLink){
-            uri += (uri.indexOf('?') >= 0)?'&ovaId='+id:'?ovaId='+id;
+        if (this.options.externalLink) {
+            uri += (uri.indexOf('?') >= 0) ? '&ovaId=' + id : '?ovaId=' + id;
             location.href = uri;
-        }else{
-            var isContainer = typeof this.annotator.an!='undefined' && typeof this.annotator.an[container]!='undefined',
-                ovaInstance = isContainer? this.annotator.an[container]:null;
-            if(ovaInstance!=null){
+        } else {
+            var isContainer = typeof this.annotator.an !== 'undefined' && typeof this.annotator.an[container] !== 'undefined';
+            var ovaInstance = isContainer ? this.annotator.an[container] : null;
+            if (ovaInstance !== null) {
                 var allannotations = this.annotator.plugins['Store'].annotations,
                     ovaId = id,
                     player = ovaInstance.player;
 
                 for (var item in allannotations) {
                     var an = allannotations[item];
-                    if (typeof an.id!='undefined' && an.id == ovaId){//this is the annotation
-                        if(this._isVideoJS(an)){//It is a video
-                            if (player.id_ == an.target.container && player.tech.options_.source.src == an.target.src){
+                    if (typeof an.id !== 'undefined' && an.id === ovaId) { // this is the annotation
+                        if (this._isVideoJS(an)) { // It is a video
+                            if (player.id_ === an.target.container && player.tech.options_.source.src === an.target.src) {
                                 var anFound = an;
 
                                 var playFunction = function(){
                                     // Fix problem with youtube videos in the first play. The plugin don't have this trigger
-                                    if (player.techName == 'Youtube'){
-                                        var startAPI = function(){
+                                    if (player.techName === 'Youtube') {
+                                        var startAPI = function() {
+
                                             ovaInstance.showAnnotation(anFound);
                                         }
                                         if (ovaInstance.loaded)
                                             startAPI();
                                         else
-                                            player.one('loadedRangeSlider', startAPI);//show Annotations once the RangeSlider is loaded
-                                    }else{
+                                            player.one('loadedRangeSlider', startAPI); // show Annotations once the RangeSlider is loaded
+                                    } else {
+
                                         ovaInstance.showAnnotation(anFound);
                                     }
 
-                                    $('html,body').animate({
-                                        scrollTop: $("#"+player.id_).offset().top},
+                                    $('html, body').animate({
+                                        scrollTop: $("#" + player.id_).offset().top},
                                         'slow');
                                 };
                                 if (player.paused()) {
                                     player.play();
-                                    player.one('playing',playFunction);
-                                }else{
+                                    player.one('playing', playFunction);
+                                } else {
                                     playFunction();
                                 }
 
-                                return false;//this will stop the code to not set a new player.one.
+                                return false; // this will stop the code to not set a new player.one.
                             }
                         }
                     }
@@ -852,65 +867,69 @@ CatchAnnotation.prototype = {
     },
     _onZoomToImageBoundsButtonClick: function(evt){
         var zoomToBounds = $(evt.target).hasClass('zoomToImageBounds')?$(evt.target):$(evt.target).parents('.zoomToImageBounds:first');
-        var osdaId = zoomToBounds.find('.idAnnotation').html();
+        var osdaId = parseInt(zoomToBounds.find('.idAnnotation').html(), 10);
         var uri = zoomToBounds.find('.uri').html();
 
         var allannotations = this.annotator.plugins['Store'].annotations;
         var osda = this.annotator.osda;
 
-        if(this.options.externalLink){
-            uri += (uri.indexOf('?') >= 0)?'&osdaId='+osdaId:'?osdaId='+osdaId;
+        if (this.options.externalLink) {
+            uri += (uri.indexOf('?') >= 0) ?'&osdaId=' + osdaId : '?osdaId=' + osdaId;
             location.href = uri;
         }
-        for(var item in allannotations){
+        for(var item in allannotations) {
             var an = allannotations[item];
             // Makes sure that all images are set to transparent in case one was
             // previously selected.
-            an.highlights[0].style.background = "rgba(0,0,0,0)";
-            if (typeof an.id!='undefined' && an.id == osdaId){//this is the annotation
+            if (an.highlights) {
+               an.highlights[0].style.background = "rgba(0, 0, 0, 0)";
+            }
+            if (typeof an.id !== 'undefined' && an.id === osdaId) { // this is the annotation
                 var bounds = new OpenSeadragon.Rect(an.bounds.x, an.bounds.y, an.bounds.width, an.bounds.height);
                 osda.viewer.viewport.fitBounds(bounds, false);
 
-                $('html,body').animate({scrollTop: $("#"+an.target.container).offset().top},
+                $('html, body').animate({scrollTop: $("#"+an.target.container).offset().top},
                                         'slow');
                 // signifies a selected annotation once OSD has zoomed in on the
                 // appropriate area, it turns the background a bit yellow
-                an.highlights[0].style.background = "rgba(255,255,10,0.2)";
+                if (an.highlights !== undefined) {
+                    an.highlights[0].style.background = "rgba(255, 255, 10, 0.2)";
+                }
             }
         }
     },
-    _onQuoteMediaButton: function(evt){
+    _onQuoteMediaButton: function(evt) {
         var quote = $(evt.target).hasClass('quote')?$(evt.target):$(evt.target).parents('.quote:first');
-        var id = quote.find('.idAnnotation').html();
+        var id = parseInt(quote.find('.idAnnotation').html(), 10);
         var uri = quote.find('.uri').html();
-        if (typeof id=='undefined' || id==''){
+        if (typeof id === 'undefined' || id === ''){
             this.refreshCatch();
             this.checkTotAnnotations();
             id = quote.find('.idAnnotation').html();
             // clickPlaySelection(evt);
         }
-        if(this.options.externalLink){
+        if (this.options.externalLink) {
             uri += (uri.indexOf('?') >= 0)?'&ovaId='+id:'?ovaId='+id;
             location.href = uri;
-        }else{
+        } else {
             var allannotations = this.annotator.plugins['Store'].annotations;
             var ovaId = id;
             for (var item in allannotations) {
                 var an = allannotations[item];
-                if (typeof an.id!='undefined' && an.id == ovaId){//this is the annotation
-                    if(!this._isVideoJS(an)){
+                if (typeof an.id !== 'undefined' && an.id === ovaId) { // this is the annotation
+                    if(!this._isVideoJS(an)) {
 
-                        var hasRanges = typeof an.ranges!='undefined' && typeof an.ranges[0] !='undefined',
+                        var hasRanges = typeof an.ranges !== 'undefined' && typeof an.ranges[0] !== 'undefined',
                             startOffset = hasRanges?an.ranges[0].startOffset:'',
                             endOffset = hasRanges?an.ranges[0].endOffset:'';
 
-                        if(typeof startOffset!='undefined' && typeof endOffset!='undefined'){ 
+                        if (typeof startOffset !== 'undefined' && typeof endOffset !== 'undefined' && typeof an.highlights) { 
 
                             $(an.highlights).parent().find('.annotator-hl').removeClass('api'); 
                             // change the color
                             $(an.highlights).addClass('api'); 
                             // animate to the annotation
-                            $('html,body').animate({
+                            $('html, body').animate({
                                 scrollTop: $(an.highlights[0]).offset().top},
                                 'slow');
                         }
@@ -919,9 +938,9 @@ CatchAnnotation.prototype = {
             }
         }
     },
-    _refreshReplies: function(evt){
+    _refreshReplies: function(evt) {
         var item = $(evt.target).parents('.annotationItem:first');
-        var anId = item.attr('annotationId');
+        var anId = parseInt(item.attr('annotationId'), 10);
             
         var replyElem = $(evt.target).parents('.annotationItem:first').find('.replies');
         var annotator = this.annotator;
@@ -933,10 +952,10 @@ CatchAnnotation.prototype = {
             parentid:anId,
             uri:loadFromSearchURI,        
         };
-        var onSuccess=function(data){
-            if (data == null) data = {};
+        var onSuccess=function(data) {
+            if (data === null) data = {};
             annotations = data.rows || [];
-            var _i,_len;
+            var _i, _len;
             for (_i = 0, _len = annotations.length; _i < _len; _i++) {
                 
                 self._formatCatch(annotations[_i]);
@@ -945,17 +964,16 @@ CatchAnnotation.prototype = {
                 annotations: annotations
             }));
             var replyItems = $('.replies .replyItem');
-            if(typeof replyItems != 'undefined' && replyItems.length > 0){
-                annotations.forEach(function(ann){
-                    replyItems.each(function(item){
-                        var id = $(replyItems[item]).attr('annotationid');
-                        if(id == ann.id){
+            if (typeof replyItems !== 'undefined' && replyItems.length > 0) {
+                annotations.forEach(function(ann) {
+                    replyItems.each(function(item) {
+                        var id = parseInt($(replyItems[item]).attr('annotationid'), 10);
+                        if (id === ann.id) {
                             var perm = self.annotator.plugins.Permissions;
-                            if(!perm.options.userAuthorize('delete',ann,perm.user)){
+                            if (!perm.options.userAuthorize('delete', ann, perm.user)) {
                                 $(replyItems[item]).find('.deleteReply').remove();
-                            }else{
-                                $(replyItems[item]).data('annotation',ann);
-                                
+                            } else {
+                                $(replyItems[item]).data('annotation', ann);
                             }
                         }
                     });
@@ -971,10 +989,10 @@ CatchAnnotation.prototype = {
         request._id = id;
         request._action = action;
     },
-    _onControlRepliesClick: function(evt){
+    _onControlRepliesClick: function(evt) {
         var action = $(evt.target)[0].className;
         
-        if(action=='newReply'){
+        if (action === 'newReply') {
             var item = $(evt.target).parents('.annotationItem:first');
             var id = item.attr('annotationId');
             // Pre-show Adder
@@ -990,6 +1008,9 @@ CatchAnnotation.prototype = {
             var positionAnnotator = videojs.findPosition(wrapper[0]);
             var positionAdder = {};
 
+            // the following addition to display makes sure the editor shows up
+            // after opening TinyMCE/editor within the image source
+            positionAdder.display = "block";
             positionAdder.left = positionLeft.left - positionAnnotator.left;
             positionAdder.top = positionLeft.top + 20 - positionAnnotator.top;
 
@@ -999,21 +1020,21 @@ CatchAnnotation.prototype = {
             this.annotator.onAdderClick();
             
             // Set vertical editor
+            $(this.annotator.editor.element).css(positionAdder);
             this.annotator.editor.resetOrientation();
             this.annotator.editor.invertY();
-            this.annotator.editor.element.find('.annotator-widget').css('min-width',replyElem.css('width'));
 
             // set parent 
             var parentValue = $(this.annotator.editor.element).find(".reply-item span.parent-annotation");
             parentValue.html(id);
             var self = this;
             
-        }else if(action=='hideReplies'){
+        } else if (action === 'hideReplies') {
             var oldAction = $(evt.target).html();
             
-            if (oldAction=='Show Replies'){
+            if (oldAction === 'Show Replies'){
                 $(evt.target).html('Hide Replies');
-            }else{
+            } else {
                 $(evt.target).html('Show Replies');
                 var replyElem = $(evt.target).parents('.annotationItem:first').find('.replies');
                 replyElem.html('');
@@ -1022,38 +1043,38 @@ CatchAnnotation.prototype = {
            
             // search
             this._refreshReplies(evt);
-        }else if(action=='deleteAnnotation'){
-            if(confirm("Would you like to delete the annotation?")){
+        } else if (action === 'deleteAnnotation') {
+            if (confirm("Would you like to delete the annotation?")) {
                 var annotator = this.annotator;
                 var item = $(evt.target).parents('.annotationItem:first');
-                var id = item.attr('annotationId');
+                var id = parseInt(item.attr('annotationId'), 10);
                 var store = annotator.plugins.Store;
                 var annotations = store.annotations;
                 var permissions = annotator.plugins.Permissions;
                 var annotation;
-                annotations.forEach(function(ann){
-                   if(ann.id == id)
+                annotations.forEach(function(ann) {
+                   if (ann.id === id)
                        annotation = ann;
                 });
-                var authorized = permissions.options.userAuthorize('delete', annotation,permissions.user);
-                if(authorized)
+                var authorized = permissions.options.userAuthorize('delete', annotation, permissions.user);
+                if (authorized)
                     annotator.deleteAnnotation(annotation);
             }
-        }else if(action=='editAnnotation'){
+        } else if (action === 'editAnnotation') {
            
             var annotator = this.annotator;
             var item = $(evt.target).parents('.annotationItem:first');
-            var id = item.attr('annotationId');
+            var id = parseInt(item.attr('annotationId'), 10);
             var store = annotator.plugins.Store;
             var annotations = store.annotations;
             var permissions = annotator.plugins.Permissions;
             var annotation;
-            annotations.forEach(function(ann){
-               if(ann.id == id)
+            annotations.forEach(function(ann) {
+               if (ann.id === id)
                    annotation = ann;
             });
-            var authorized = permissions.options.userAuthorize('update', annotation,permissions.user);
-            if(authorized){
+            var authorized = permissions.options.userAuthorize('update', annotation, permissions.user);
+            if (authorized){
                 // Get elements
                 var wrapper = $('.annotator-wrapper');
                 // Calculate Editor position
@@ -1083,19 +1104,18 @@ CatchAnnotation.prototype = {
     },
     _onShareControlsClick: function(evt) {
         var action = $(evt.target)[0].className;
-        if(action=='privacy_button'){
+        if (action === 'privacy_button') {
             
-        }else if(action=='groups_button'){
+        } else if (action === 'groups_button') {
             alert("Coming soon...");
-        }else if(action=='reply_button'){
+        } else if (action === 'reply_button') {
             var item = $(evt.target).parents('.annotationItem:first'),
                 id = item.attr('annotationId');
             // New annotation
             var an = this.annotator.setupAnnotation(this.annotator.createAnnotation());
             an.text="010";
             an.parent = id;
-        }else if(action=='share_button'){
-           
+        } else if (action === 'share_button') {
 
         }
     },
@@ -1116,10 +1136,19 @@ CatchAnnotation.prototype = {
                 break;
         }
         this.current_tab = action.html();
+        
+        // checks to make sure that Grouping is redone when switching tags in text annotations
+        if (this.options.media === 'text') {
+            if (typeof this.annotator.plugins.Grouping !== 'undefined') {
+                // this is to check if user is is MyNotes instead of the annotation component
+                this.annotator.plugins.Grouping.useGrouping = this.current_tab === 'public' ? 0 : 1;
+            } 
+            this.annotator.publish("changedTabsInCatch");
+        }
         // Change userid and refresh
         this.changeUserId(userId);
     },
-    _onSelectionButtonClick: function(evt){
+    _onSelectionButtonClick: function(evt) {
         var but = $(evt.target);
         var action = but.attr('media');
     
@@ -1130,19 +1159,23 @@ CatchAnnotation.prototype = {
         // Change media and refresh
         this.changeMedia(action);
     },
-    _onMoreButtonClick: function(evt){
+    _onMoreButtonClick: function(evt) {
         this.clean = false;
         var moreBut = this.element.find('.annotationListButtons .moreButtonCatch');
-        var isLoading = moreBut.html()=='More'?false:true;
+        var isLoading = moreBut.html() === 'More'?false:true;
         if(!isLoading)
             this.loadAnnotations();
     },
             
-    _refresh:function(searchtype,searchInput){
+    _refresh:function(searchtype, searchInput) {
         var searchtype = searchtype || "";
         var searchInput = searchInput || ""; 
         this.clean = true;
-        this._clearAnnotator();
+
+        // the following cannot run in notes for there are no highlights
+        if ($("#notesHolder").length === 0) {
+            this._clearAnnotator();
+        }
         
         var annotator = this.annotator;
         var loadFromSearch = annotator.plugins.Store.options.loadFromSearch;
@@ -1156,37 +1189,37 @@ CatchAnnotation.prototype = {
         loadFromSearch.tag = "";
         loadFromSearch.text = "";
         
-        if (searchtype == "Users"){
+        if (searchtype === "Users") {
             loadFromSearch.username = searchInput;
-        } else if(searchtype == "Tags"){
+        } else if(searchtype === "Tags") {
             loadFromSearch.tag = searchInput;
-        } else{
+        } else {
             loadFromSearch.text = searchInput;
         }
         annotator.plugins['Store'].loadAnnotationsFromSearch(loadFromSearch);
     },
     
-    _onSearchButtonClick: function(evt){
+    _onSearchButtonClick: function(evt) {
         var searchtype = this.element.find('.searchbox .dropdown-list').val();
         var searchInput = this.element.find('.searchbox input').val();
-        this._refresh(searchtype,searchInput);
+        this._refresh(searchtype, searchInput);
         
     },
-    _onClearSearchButtonClick: function(evt){
-        this._refresh('','');    
+    _onClearSearchButtonClick: function(evt) {
+        this._refresh('', '');    
     },
-    _clearAnnotator: function(){
+    _clearAnnotator: function() {
         var annotator = this.annotator;
         var store = annotator.plugins.Store;
         var annotations = store.annotations.slice();
         
         annotations.forEach(function(ann){
             var child, h, _i, _len, _ref;
-            if (ann.highlights != null) {
+            if (ann.highlights !== undefined) {
                 _ref = ann.highlights;
                 for (_i = 0, _len = _ref.length; _i < _len; _i++) {
                     h = _ref[_i];
-                    if (!(h.parentNode != null)) {
+                    if (!(h.parentNode !== undefined)) {
                         continue;
                     }
                     child = h.childNodes[0];
@@ -1196,18 +1229,21 @@ CatchAnnotation.prototype = {
             store.unregisterAnnotation(ann);
         });
     },
-    _onDeleteReplyButtonClick : function(evt){
+    _onDeleteReplyButtonClick : function(evt) {
         var annotator = this.annotator;
         var item = $(evt.target).parents('.replyItem:first');
         var id = item.attr('annotationid');
         var permissions = annotator.plugins.Permissions;
         var annotation = item.data('annotation');
-        var authorized = permissions.options.userAuthorize('delete', annotation,permissions.user);
+        var authorized = permissions.options.userAuthorize('delete', annotation, permissions.user);
         if(authorized){
             if(confirm('Would you like to delete this reply?')){
                 annotator.plugins['Store']._apiRequest('destroy', annotation, function(){});
                 item.remove();
             }
         }
-    }
+    },
+    openLoadingGIF: function() {
+        $('#mainCatch').append('<div class=\'annotations-loading-gif\'><img src="'+this.options.imageUrlRoot+'loading_bar.gif" /><br />Annotations Data Loading... Please Wait.</div>');
+    },
 }

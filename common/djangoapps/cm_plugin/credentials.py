@@ -13,7 +13,7 @@ class ImmutableMash(YAMLObject):
     yaml_loader = Loader
     yaml_dumper = Dumper
 
-    yaml_tag = u'!map:Chef::Node::ImmutableMash'
+    yaml_tag = u'!ruby/hash:Chef::Node::ImmutableMash'
 
     @classmethod
     def from_yaml(cls, loader, node):
@@ -28,7 +28,7 @@ class ImmutableArray(YAMLObject):
     yaml_loader = Loader
     yaml_dumper = Dumper
 
-    yaml_tag = u'!seq:Chef::Node::ImmutableArray'
+    yaml_tag = u'!ruby/array:Chef::Node::ImmutableArray'
 
     @classmethod
     def from_yaml(cls, loader, node):
@@ -40,9 +40,25 @@ def _app_id():
     with open(CRED_FILE, 'r') as y:
         return load(y)[':app_id']
 
+def _lms_id():
+    with open(CRED_FILE, 'r') as y:
+        return load(y)[':lms_id']
+
 def _callback_url():
     with open(CRED_FILE, 'r') as y:
        return load(y)[':callback_url']
+
+def _aws_access_key_id():
+    with open(CRED_FILE, 'r') as y:
+       return load(y)[':aws_access_key_id']
+
+def _aws_secret_access_key():
+    with open(CRED_FILE, 'r') as y:
+       return load(y)[':aws_secret_access_key']
+
+def _environment():
+    with open(CRED_FILE, 'r') as y:
+       return load(y)[':environment']
 
 def _api_key():
     with open(CRED_FILE, 'r') as y:
@@ -61,9 +77,13 @@ def _shared_secret():
 
 KEYS = {
     'app_id': _app_id,
+    'lms_id': _lms_id,
     'api_key': _api_key,
     'callback_url': _callback_url,
     'shared_secret': _shared_secret,
+    'aws_access_key_id': _aws_access_key_id,
+    'aws_secret_access_key': _aws_secret_access_key,
+    'environment': _environment
 }
 
 

@@ -1,4 +1,7 @@
-# pylint: disable=E1103, E1101
+"""
+Common utility functions useful throughout the contentstore
+"""
+# pylint: disable=no-member
 
 import copy
 import logging
@@ -27,7 +30,8 @@ log = logging.getLogger(__name__)
 # In order to instantiate an open ended tab automatically, need to have this data
 OPEN_ENDED_PANEL = {"name": _("Open Ended Panel"), "type": "open_ended"}
 NOTES_PANEL = {"name": _("My Notes"), "type": "notes"}
-EXTRA_TAB_PANELS = dict([(p['type'], p) for p in [OPEN_ENDED_PANEL, NOTES_PANEL]])
+EDXNOTES_PANEL = {"name": _("Notes"), "type": "edxnotes"}
+EXTRA_TAB_PANELS = dict([(p['type'], p) for p in [OPEN_ENDED_PANEL, NOTES_PANEL, EDXNOTES_PANEL]])
 
 
 def add_instructor(course_key, requesting_user, new_instructor):
@@ -72,7 +76,7 @@ def delete_course_and_groups(course_key, user_id):
     """
     module_store = modulestore()
 
-    with module_store.bulk_write_operations(course_key):
+    with module_store.bulk_operations(course_key):
         module_store.delete_course(course_key, user_id)
 
         print 'removing User permissions from course....'
@@ -146,27 +150,15 @@ def get_lms_link_for_about_page(course_key):
 def course_image_url(course):
     """Returns the image url for the course."""
     loc = StaticContent.compute_location(course.location.course_key, course.course_image)
-    path = loc.to_deprecated_string()
+    path = StaticContent.serialize_asset_key_with_slash(loc)
     return path
 
 
-def compute_publish_state(xblock):
+# pylint: disable=invalid-name
+def is_currently_visible_to_students(xblock):
     """
-    Returns whether this xblock is draft, public, or private.
-
-    Returns:
-        PublishState.draft - content is in the process of being edited, but still has a previous
-            version deployed to LMS
-        PublishState.public - content is locked and deployed to LMS
-        PublishState.private - content is editable and not deployed to LMS
-    """
-
-    return modulestore().compute_publish_state(xblock)
-
-
-def is_xblock_visible_to_students(xblock):
-    """
-    Returns true if there is a published version of the xblock that has been released.
+    Returns true if there is a published version of the xblock that is currently visible to students.
+    This means that it has a release date in the past, and the xblock has not been set to staff only.
     """
 
     try:
@@ -185,6 +177,96 @@ def is_xblock_visible_to_students(xblock):
 
     # No start date, so it's always visible
     return True
+
+
+def has_children_visible_to_specific_content_groups(xblock):
+    """
+    Returns True if this xblock has children that are limited to specific content groups.
+    Note that this method is not recursive (it does not check grandchildren).
+    """
+    if not xblock.has_children:
+        return False
+
+    for child in xblock.get_children():
+        if is_visible_to_specific_content_groups(child):
+            return True
+
+    return False
+
+
+def is_visible_to_specific_content_groups(xblock):
+    """
+    Returns True if this xblock has visibility limited to specific content groups.
+    """
+    if not xblock.group_access:
+        return False
+    for __, value in xblock.group_access.iteritems():
+        # value should be a list of group IDs. If it is an empty list or None, the xblock is visible
+        # to all groups in that particular partition. So if value is a truthy value, the xblock is
+        # restricted in some way.
+        if value:
+            return True
+    return False
+
+
+def find_release_date_source(xblock):
+    """
+    Finds the ancestor of xblock that set its release date.
+    """
+
+    # Stop searching at the section level
+    if xblock.category == 'chapter':
+        return xblock
+
+    parent_location = modulestore().get_parent_location(xblock.location,
+                                                        revision=ModuleStoreEnum.RevisionOption.draft_preferred)
+    # Orphaned xblocks set their own release date
+    if not parent_location:
+        return xblock
+
+    parent = modulestore().get_item(parent_location)
+    if parent.start != xblock.start:
+        return xblock
+    else:
+        return find_release_date_source(parent)
+
+
+def find_staff_lock_source(xblock):
+    """
+    Returns the xblock responsible for setting this xblock's staff lock, or None if the xblock is not staff locked.
+    If this xblock is explicitly locked, return it, otherwise find the ancestor which sets this xblock's staff lock.
+    """
+
+    # Stop searching if this xblock has explicitly set its own staff lock
+    if xblock.fields['visible_to_staff_only'].is_set_on(xblock):
+        return xblock
+
+    # Stop searching at the section level
+    if xblock.category == 'chapter':
+        return None
+
+    parent_location = modulestore().get_parent_location(xblock.location,
+                                                        revision=ModuleStoreEnum.RevisionOption.draft_preferred)
+    # Orphaned xblocks set their own staff lock
+    if not parent_location:
+        return None
+
+    parent = modulestore().get_item(parent_location)
+    return find_staff_lock_source(parent)
+
+
+def ancestor_has_staff_lock(xblock, parent_xblock=None):
+    """
+    Returns True iff one of xblock's ancestors has staff lock.
+    Can avoid mongo query by passing in parent_xblock.
+    """
+    if parent_xblock is None:
+        parent_location = modulestore().get_parent_location(xblock.location,
+                                                            revision=ModuleStoreEnum.RevisionOption.draft_preferred)
+        if not parent_location:
+            return False
+        parent_xblock = modulestore().get_item(parent_location)
+    return parent_xblock.visible_to_staff_only
 
 
 def add_extra_panel_tab(tab_type, course):
@@ -243,6 +325,13 @@ def reverse_course_url(handler_name, course_key, kwargs=None):
     Creates the URL for handlers that use course_keys as URL parameters.
     """
     return reverse_url(handler_name, 'course_key_string', course_key, kwargs)
+
+
+def reverse_library_url(handler_name, library_key, kwargs=None):
+    """
+    Creates the URL for handlers that use library_keys as URL parameters.
+    """
+    return reverse_url(handler_name, 'library_key_string', library_key, kwargs)
 
 
 def reverse_usage_url(handler_name, usage_key, kwargs=None):

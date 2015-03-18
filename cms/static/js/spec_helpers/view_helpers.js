@@ -1,40 +1,15 @@
 /**
  * Provides helper methods for invoking Studio modal windows in Jasmine tests.
  */
-define(['jquery', 'js/views/feedback_notification', 'js/views/feedback_prompt'],
-    function($, NotificationView, Prompt) {
-        'use strict';
-        var installTemplate, installTemplates, installViewTemplates, createFeedbackSpy, verifyFeedbackShowing,
+define(["jquery", "js/views/feedback_notification", "js/views/feedback_prompt", "js/common_helpers/template_helpers"],
+    function($, NotificationView, Prompt, TemplateHelpers) {
+        var installViewTemplates, createFeedbackSpy, verifyFeedbackShowing,
             verifyFeedbackHidden, createNotificationSpy, verifyNotificationShowing,
-            verifyNotificationHidden, createPromptSpy, confirmPrompt, verifyPromptShowing,
-            verifyPromptHidden;
-
-        installTemplate = function(templateName, isFirst) {
-            var template = readFixtures(templateName + '.underscore'),
-                templateId = templateName + '-tpl';
-
-            if (isFirst) {
-                setFixtures($('<script>', { id: templateId, type: 'text/template' }).text(template));
-            } else {
-                appendSetFixtures($('<script>', { id: templateId, type: 'text/template' }).text(template));
-            }
-        };
-
-        installTemplates = function(templateNames, isFirst) {
-            if (!$.isArray(templateNames)) {
-                templateNames = [templateNames];
-            }
-
-            $.each(templateNames, function(index, templateName) {
-                installTemplate(templateName, isFirst);
-                if (isFirst) {
-                    isFirst = false;
-                }
-            });
-        };
+            verifyNotificationHidden, createPromptSpy, confirmPrompt, inlineEdit, verifyInlineEditChange,
+            installMockAnalytics, removeMockAnalytics, verifyPromptShowing, verifyPromptHidden;
 
         installViewTemplates = function(append) {
-            installTemplate('system-feedback', !append);
+            TemplateHelpers.installTemplate('system-feedback', !append);
             appendSetFixtures('<div id="page-notification"></div>');
         };
 
@@ -90,9 +65,36 @@ define(['jquery', 'js/views/feedback_notification', 'js/views/feedback_prompt'],
             verifyFeedbackHidden.apply(this, arguments);
         };
 
+        installMockAnalytics = function() {
+            window.analytics = jasmine.createSpyObj('analytics', ['track']);
+            window.course_location_analytics = jasmine.createSpy();
+        };
+
+        removeMockAnalytics = function() {
+            delete window.analytics;
+            delete window.course_location_analytics;
+        };
+
+        inlineEdit = function(editorWrapper, newValue) {
+            var inputField = editorWrapper.find('.xblock-field-input'),
+                editButton = editorWrapper.find('.xblock-field-value-edit');
+            editButton.click();
+            expect(editorWrapper).toHaveClass('is-editing');
+            inputField.val(newValue);
+            return inputField;
+        };
+
+        verifyInlineEditChange = function(editorWrapper, expectedValue, failedValue) {
+            var displayName = editorWrapper.find('.xblock-field-value');
+            expect(displayName.text()).toBe(expectedValue);
+            if (failedValue) {
+                expect(editorWrapper).toHaveClass('is-editing');
+            } else {
+                expect(editorWrapper).not.toHaveClass('is-editing');
+            }
+        };
+
         return {
-            'installTemplate': installTemplate,
-            'installTemplates': installTemplates,
             'installViewTemplates': installViewTemplates,
             'createNotificationSpy': createNotificationSpy,
             'verifyNotificationShowing': verifyNotificationShowing,
@@ -100,6 +102,10 @@ define(['jquery', 'js/views/feedback_notification', 'js/views/feedback_prompt'],
             'confirmPrompt': confirmPrompt,
             'createPromptSpy': createPromptSpy,
             'verifyPromptShowing': verifyPromptShowing,
-            'verifyPromptHidden': verifyPromptHidden
+            'verifyPromptHidden': verifyPromptHidden,
+            'inlineEdit': inlineEdit,
+            'verifyInlineEditChange': verifyInlineEditChange,
+            'installMockAnalytics': installMockAnalytics,
+            'removeMockAnalytics': removeMockAnalytics
         };
     });

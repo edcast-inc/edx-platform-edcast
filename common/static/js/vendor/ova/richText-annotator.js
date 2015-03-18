@@ -23,27 +23,28 @@ var _ref,
   __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
 
 Annotator.Plugin.RichText = (function(_super) {
+
     __extends(RichText, _super);
     
     
-    // default tinymce configuration
+    //Default tinymce configuration
     RichText.prototype.options = {
         tinymce:{
             selector: "li.annotator-item textarea",
             skin: 'studio-tmce4',
             formats: {
                 code: {
-                    inline: 'code',
+                    inline: 'code'
                 }
             },
             codemirror: {
-                path: "/static/js/vendor",
+                path: "/static/js/vendor"
             },
-            plugins: "image link codemirror",
+            plugins: "image link codemirror media",
             menubar: false,
             toolbar_items_size: 'small',
             extended_valid_elements : "iframe[src|frameborder|style|scrolling|class|width|height|name|align|id]",
-            toolbar: "insertfile undo redo | styleselect | bold italic | alignleft aligncenter alignright alignjustify | bullist numlist outdent indent | link image rubric | code ",
+            toolbar: "insertfile undo redo | styleselect | bold italic | alignleft aligncenter alignright alignjustify | bullist numlist outdent indent | link image media | code ",
             resize: "both",
         }
     };
@@ -92,6 +93,17 @@ Annotator.Plugin.RichText = (function(_super) {
                 // set the modification in the textarea of annotator
                 $(editor.element).find('textarea')[0].value = tinymce.activeEditor.getContent();
             });
+
+            // creates a function called whenever editor is resized
+            ed.on('init', function(mceInstance) {
+
+                // get win means this event activates when window is resized
+                tinymce.dom.Event.bind(ed.getWin(), 'resize', function(e){
+
+                    // mceInstance.target gets the editor, its id is used to retrieved iframe
+                    $("#"+mceInstance.target.id+"_ifr").css('min-width', '400px');
+                });
+            });
             // new button to add Rubrics of the url https://gteavirtual.org/rubric
             ed.addButton('rubric', {
                 icon: 'rubric',
@@ -129,10 +141,11 @@ Annotator.Plugin.RichText = (function(_super) {
             });
         };
 
-        // makes sure that tinymce is not initiated by checking if editors exist
-        if(tinymce.editors.length === 0) {
-            tinymce.init(this.options.tinymce);
+        // makes sure that if tinymce exists already that this removes/destroys previous version
+        if (tinymce.editors.length > 0) {
+            tinymce.remove("li.annotator-item textarea");  
         }
+        tinymce.init(this.options.tinymce);
     };
     
     /**

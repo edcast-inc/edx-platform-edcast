@@ -9,7 +9,6 @@ import aes
 from credentials import cm_credentials
 import urllib
 
-
 class ExternalAuthMiddleware(object):
 
     def auth_user(self, request, email):
@@ -28,8 +27,7 @@ class ExternalAuthMiddleware(object):
                 raise # probably memcache is down
 
 
-    def process_request(self, request):
-        
+    def process_request(self, request):        
         if request.method == 'GET':
             token = request.GET.get('token', '')
 		
@@ -50,7 +48,6 @@ class ExternalAuthMiddleware(object):
 
 
     def process_response(self, request, response):
-
         token = request.GET.get('token', '')
         user = None
         if hasattr(request, 'user'):
