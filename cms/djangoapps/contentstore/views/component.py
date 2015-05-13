@@ -8,6 +8,7 @@ from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_GET
 from django.core.exceptions import PermissionDenied
 from django.conf import settings
+from opaque_keys import InvalidKeyError
 from xmodule.modulestore.exceptions import ItemNotFoundError
 from edxmako.shortcuts import render_to_response
 
@@ -16,6 +17,7 @@ from xmodule.modulestore.django import modulestore
 from xblock.core import XBlock
 from xblock.django.request import webob_to_django_response, django_to_webob_request
 from xblock.exceptions import NoSuchHandlerError
+from xblock.fields import Scope
 from xblock.plugin import PluginMissingError
 from xblock.runtime import Mixologist
 
@@ -156,7 +158,10 @@ def container_handler(request, usage_key_string):
     """
     if 'text/html' in request.META.get('HTTP_ACCEPT', 'text/html'):
 
-        usage_key = UsageKey.from_string(usage_key_string)
+        try:
+            usage_key = UsageKey.from_string(usage_key_string)
+        except InvalidKeyError:  # Raise Http404 on invalid 'usage_key_string'
+            raise Http404
         with modulestore().bulk_operations(usage_key.course_key):
             try:
                 course, xblock, lms_link, preview_lms_link = _get_item_in_course(request, usage_key)
@@ -276,7 +281,7 @@ def get_component_templates(courselike, library=False):
                 if not filter_templates or filter_templates(template, courselike):
                     templates_for_category.append(
                         create_template_dict(
-                            _(template['metadata'].get('display_name')),
+                            _(template['metadata'].get('display_name')),    # pylint: disable=translation-of-non-string
                             category,
                             template.get('template_id'),
                             template['metadata'].get('markdown') is not None
@@ -288,9 +293,15 @@ def get_component_templates(courselike, library=False):
             for advanced_problem_type in ADVANCED_PROBLEM_TYPES:
                 component = advanced_problem_type['component']
                 boilerplate_name = advanced_problem_type['boilerplate_name']
-                component_display_name = xblock_type_display_name(component)
-                templates_for_category.append(create_template_dict(component_display_name, component, boilerplate_name))
-                categories.add(component)
+                try:
+                    component_display_name = xblock_type_display_name(component)
+                except PluginMissingError:
+                    log.warning('Unable to load xblock type %s to read display_name', component, exc_info=True)
+                else:
+                    templates_for_category.append(
+                        create_template_dict(component_display_name, component, boilerplate_name)
+                    )
+                    categories.add(component)
 
         component_templates.append({
             "type": category,
@@ -333,7 +344,6 @@ def get_component_templates(courselike, library=False):
                         "Advanced component %s does not exist. It will not be added to the Studio new component menu.",
                         category
                     )
-                    pass
     else:
         log.error(
             "Improper format for course advanced keys! %s",

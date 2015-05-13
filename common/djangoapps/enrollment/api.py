@@ -36,7 +36,10 @@ def get_enrollments(user_id):
                 "user": "Bob",
                 "course": {
                     "course_id": "edX/DemoX/2014T2",
-                    "enrollment_end": 2014-12-20T20:18:00Z,
+                    "enrollment_end": "2014-12-20T20:18:00Z",
+                    "enrollment_start": "2014-10-15T20:18:00Z",
+                    "course_start": "2015-02-03T00:00:00Z",
+                    "course_end": "2015-05-06T00:00:00Z",
                     "course_modes": [
                         {
                             "slug": "honor",
@@ -45,10 +48,10 @@ def get_enrollments(user_id):
                             "suggested_prices": "",
                             "currency": "usd",
                             "expiration_datetime": null,
-                            "description": null
+                            "description": null,
+                            "sku": null
                         }
                     ],
-                    "enrollment_start": 2014-10-15T20:18:00Z,
                     "invite_only": False
                 }
             },
@@ -59,7 +62,10 @@ def get_enrollments(user_id):
                 "user": "Bob",
                 "course": {
                     "course_id": "edX/edX-Insider/2014T2",
-                    "enrollment_end": 2014-12-20T20:18:00Z,
+                    "enrollment_end": "2014-12-20T20:18:00Z",
+                    "enrollment_start": "2014-10-15T20:18:00Z",
+                    "course_start": "2015-02-03T00:00:00Z",
+                    "course_end": "2015-05-06T00:00:00Z",
                     "course_modes": [
                         {
                             "slug": "honor",
@@ -68,10 +74,10 @@ def get_enrollments(user_id):
                             "suggested_prices": "",
                             "currency": "usd",
                             "expiration_datetime": null,
-                            "description": null
+                            "description": null,
+                            "sku": null
                         }
                     ],
-                    "enrollment_start": 2014-10-15T20:18:00Z,
                     "invite_only": True
                 }
             }
@@ -102,7 +108,10 @@ def get_enrollment(user_id, course_id):
             "user": "Bob",
             "course": {
                 "course_id": "edX/DemoX/2014T2",
-                "enrollment_end": 2014-12-20T20:18:00Z,
+                "enrollment_end": "2014-12-20T20:18:00Z",
+                "enrollment_start": "2014-10-15T20:18:00Z",
+                "course_start": "2015-02-03T00:00:00Z",
+                "course_end": "2015-05-06T00:00:00Z",
                 "course_modes": [
                     {
                         "slug": "honor",
@@ -111,10 +120,10 @@ def get_enrollment(user_id, course_id):
                         "suggested_prices": "",
                         "currency": "usd",
                         "expiration_datetime": null,
-                        "description": null
+                        "description": null,
+                        "sku": null
                     }
                 ],
-                "enrollment_start": 2014-10-15T20:18:00Z,
                 "invite_only": False
             }
         }
@@ -148,7 +157,10 @@ def add_enrollment(user_id, course_id, mode='honor', is_active=True):
             "user": "Bob",
             "course": {
                 "course_id": "edX/DemoX/2014T2",
-                "enrollment_end": 2014-12-20T20:18:00Z,
+                "enrollment_end": "2014-12-20T20:18:00Z",
+                "enrollment_start": "2014-10-15T20:18:00Z",
+                "course_start": "2015-02-03T00:00:00Z",
+                "course_end": "2015-05-06T00:00:00Z",
                 "course_modes": [
                     {
                         "slug": "honor",
@@ -157,10 +169,10 @@ def add_enrollment(user_id, course_id, mode='honor', is_active=True):
                         "suggested_prices": "",
                         "currency": "usd",
                         "expiration_datetime": null,
-                        "description": null
+                        "description": null,
+                        "sku": null
                     }
                 ],
-                "enrollment_start": 2014-10-15T20:18:00Z,
                 "invite_only": False
             }
         }
@@ -192,7 +204,10 @@ def update_enrollment(user_id, course_id, mode=None, is_active=None):
             "user": "Bob",
             "course": {
                 "course_id": "edX/DemoX/2014T2",
-                "enrollment_end": 2014-12-20T20:18:00Z,
+                "enrollment_end": "2014-12-20T20:18:00Z",
+                "enrollment_start": "2014-10-15T20:18:00Z",
+                "course_start": "2015-02-03T00:00:00Z",
+                "course_end": "2015-05-06T00:00:00Z",
                 "course_modes": [
                     {
                         "slug": "honor",
@@ -201,10 +216,10 @@ def update_enrollment(user_id, course_id, mode=None, is_active=None):
                         "suggested_prices": "",
                         "currency": "usd",
                         "expiration_datetime": null,
-                        "description": null
+                        "description": null,
+                        "sku": null
                     }
                 ],
-                "enrollment_start": 2014-10-15T20:18:00Z,
                 "invite_only": False
             }
         }
@@ -234,7 +249,10 @@ def get_course_enrollment_details(course_id):
         >>> get_course_enrollment_details("edX/DemoX/2014T2")
         {
             "course_id": "edX/DemoX/2014T2",
-            "enrollment_end": 2014-12-20T20:18:00Z,
+            "enrollment_end": "2014-12-20T20:18:00Z",
+            "enrollment_start": "2014-10-15T20:18:00Z",
+            "course_start": "2015-02-03T00:00:00Z",
+            "course_end": "2015-05-06T00:00:00Z",
             "course_modes": [
                 {
                     "slug": "honor",
@@ -243,10 +261,10 @@ def get_course_enrollment_details(course_id):
                     "suggested_prices": "",
                     "currency": "usd",
                     "expiration_datetime": null,
-                    "description": null
+                    "description": null,
+                    "sku": null
                 }
             ],
-            "enrollment_start": 2014-10-15T20:18:00Z,
             "invite_only": False
         }
 

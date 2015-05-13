@@ -15,14 +15,11 @@ import json
 
 from .common import *
 
-from logsettings import get_logger_config
+from openedx.core.lib.logsettings import get_logger_config
 import os
 
 from path import path
 from xmodule.modulestore.modulestore_settings import convert_module_store_setting_if_needed
-
-import boto
-from cm_plugin.credentials import cm_credentials
 
 import logging
 log = logging.getLogger(__name__)
@@ -50,6 +47,14 @@ TEMPLATE_DEBUG = False
 EMAIL_BACKEND = 'django_ses.SESBackend'
 SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
 DEFAULT_FILE_STORAGE = 'storages.backends.s3boto.S3BotoStorage'
+
+# IMPORTANT: With this enabled, the server must always be behind a proxy that
+# strips the header HTTP_X_FORWARDED_PROTO from client requests. Otherwise,
+# a user can fool our server into thinking it was an https connection.
+# See
+# https://docs.djangoproject.com/en/dev/ref/settings/#secure-proxy-ssl-header
+# for other warnings.
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 ###################################### CELERY  ################################
 
@@ -142,6 +147,7 @@ if 'loc_cache' not in CACHES:
     }
 
 SESSION_COOKIE_DOMAIN = ENV_TOKENS.get('SESSION_COOKIE_DOMAIN')
+SESSION_COOKIE_HTTPONLY = ENV_TOKENS.get('SESSION_COOKIE_HTTPONLY', True)
 SESSION_ENGINE = ENV_TOKENS.get('SESSION_ENGINE', SESSION_ENGINE)
 SESSION_COOKIE_SECURE = ENV_TOKENS.get('SESSION_COOKIE_SECURE', SESSION_COOKIE_SECURE)
 
@@ -196,7 +202,9 @@ LOGGING = get_logger_config(LOG_DIR,
 #theming start:
 PLATFORM_NAME = ENV_TOKENS.get('PLATFORM_NAME', 'edX')
 STUDIO_NAME = ENV_TOKENS.get('STUDIO_NAME', 'edX Studio')
+STUDIO_SHORT_NAME = ENV_TOKENS.get('STUDIO_SHORT_NAME', 'Studio')
 TENDER_DOMAIN = ENV_TOKENS.get('TENDER_DOMAIN', TENDER_DOMAIN)
+TENDER_SUBDOMAIN = ENV_TOKENS.get('TENDER_SUBDOMAIN', TENDER_SUBDOMAIN)
 
 # Event Tracking
 if "TRACKING_IGNORE_URL_PATTERNS" in ENV_TOKENS:
@@ -240,31 +248,14 @@ if SEGMENT_IO_KEY:
     FEATURES['SEGMENT_IO'] = ENV_TOKENS.get('SEGMENT_IO', False)
 
 AWS_ACCESS_KEY_ID = AUTH_TOKENS["AWS_ACCESS_KEY_ID"]
-if AWS_ACCESS_KEY_ID == "" or AWS_ACCESS_KEY_ID is None:
-    AWS_ACCESS_KEY_ID = cm_credentials('aws_access_key_id')
+if AWS_ACCESS_KEY_ID == "":
+    AWS_ACCESS_KEY_ID = None
 
 AWS_SECRET_ACCESS_KEY = AUTH_TOKENS["AWS_SECRET_ACCESS_KEY"]
-if AWS_SECRET_ACCESS_KEY == "" or AWS_SECRET_ACCESS_KEY is None:
-    AWS_SECRET_ACCESS_KEY = cm_credentials('aws_secret_access_key')
+if AWS_SECRET_ACCESS_KEY == "":
+    AWS_SECRET_ACCESS_KEY = None
 
-AWS_STORAGE_BUCKET_NAME = AUTH_TOKENS["AWS_STORAGE_BUCKET_NAME"]
-if AWS_STORAGE_BUCKET_NAME == ""  or AWS_STORAGE_BUCKET_NAME is None:
-    lms_id = cm_credentials('lms_id')
-    environment = cm_credentials('environment')
-    AWS_STORAGE_BUCKET_NAME = 'edcast-edx-bucket-' + environment + '-lms-' + str(lms_id)
-
-if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
-    try:
-        conn = boto.connect_s3(AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
-        bucket = conn.lookup(AWS_STORAGE_BUCKET_NAME)
-        if bucket is None:
-            bucket = conn.create_bucket(AWS_STORAGE_BUCKET_NAME)
-    except Exception as e:
-        log.error("Could not find or create S3 bucket.")
-        log.exception(e)
-else:
-    log.error("One or more AWS Keys were not present while trying to access S3.")
-
+LMS_ID = ENV_TOKENS.get('LMS_ID',"")
 DATABASES = AUTH_TOKENS['DATABASES']
 MODULESTORE = convert_module_store_setting_if_needed(AUTH_TOKENS.get('MODULESTORE', MODULESTORE))
 CONTENTSTORE = AUTH_TOKENS['CONTENTSTORE']
@@ -333,6 +324,21 @@ DEPRECATED_ADVANCED_COMPONENT_TYPES = ENV_TOKENS.get(
 
 VIDEO_UPLOAD_PIPELINE = ENV_TOKENS.get('VIDEO_UPLOAD_PIPELINE', VIDEO_UPLOAD_PIPELINE)
 
+################ PUSH NOTIFICATIONS ###############
+
+PARSE_KEYS = AUTH_TOKENS.get("PARSE_KEYS", {})
+
+
 #date format the api will be formatting the datetime values
 API_DATE_FORMAT = '%Y-%m-%d'
 API_DATE_FORMAT = ENV_TOKENS.get('API_DATE_FORMAT', API_DATE_FORMAT)
+
+# Video Caching. Pairing country codes with CDN URLs.
+# Example: {'CN': 'http://api.xuetangx.com/edx/video?s3_url='}
+VIDEO_CDN_URL = ENV_TOKENS.get('VIDEO_CDN_URL', {})
+
+if FEATURES['ENABLE_COURSEWARE_INDEX'] or FEATURES['ENABLE_LIBRARY_INDEX']:
+    # Use ElasticSearch for the search engine
+    SEARCH_ENGINE = "search.elastic.ElasticSearchEngine"
+
+XBLOCK_SETTINGS = ENV_TOKENS.get('XBLOCK_SETTINGS', {})

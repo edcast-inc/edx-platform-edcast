@@ -12,7 +12,7 @@ from django.utils.translation import ugettext as _, ugettext_noop
 from django.views.decorators.http import require_GET, require_http_methods
 import rfc6266
 
-from edxval.api import create_video, get_videos_for_ids
+from edxval.api import create_video, get_videos_for_ids, SortDirection, VideoSortField
 from opaque_keys.edx.keys import CourseKey
 
 from contentstore.models import VideoUploadConfig
@@ -46,12 +46,14 @@ class StatusDisplayStrings(object):
     # Translators: This is the status for a video that the servers are currently processing
     _IN_PROGRESS = ugettext_noop("In Progress")
     # Translators: This is the status for a video that the servers have successfully processed
-    _COMPLETE = ugettext_noop("Complete")
+    _COMPLETE = ugettext_noop("Ready")
     # Translators: This is the status for a video that the servers have failed to process
-    _FAILED = ugettext_noop("Failed"),
+    _FAILED = ugettext_noop("Failed")
     # Translators: This is the status for a video for which an invalid
     # processing token was provided in the course settings
-    _INVALID_TOKEN = ugettext_noop("Invalid Token"),
+    _INVALID_TOKEN = ugettext_noop("Invalid Token")
+    # Translators: This is the status for a video that was included in a course import
+    _IMPORTED = ugettext_noop("Imported")
     # Translators: This is the status for a video that is in an unknown state
     _UNKNOWN = ugettext_noop("Unknown")
 
@@ -64,13 +66,14 @@ class StatusDisplayStrings(object):
         "file_complete": _COMPLETE,
         "file_corrupt": _FAILED,
         "pipeline_error": _FAILED,
-        "invalid_token": _INVALID_TOKEN
+        "invalid_token": _INVALID_TOKEN,
+        "imported": _IMPORTED,
     }
 
     @staticmethod
     def get(val_status):
         """Map a VAL status string to a localized display string"""
-        return _(StatusDisplayStrings._STATUS_MAP.get(val_status, StatusDisplayStrings._UNKNOWN))
+        return _(StatusDisplayStrings._STATUS_MAP.get(val_status, StatusDisplayStrings._UNKNOWN))    # pylint: disable=translation-of-non-string
 
 
 @expect_json
@@ -222,7 +225,7 @@ def _get_videos(course):
         for v in modulestore().get_all_asset_metadata(course.id, VIDEO_ASSET_TYPE)
     ]
 
-    videos = list(get_videos_for_ids(edx_videos_ids))
+    videos = list(get_videos_for_ids(edx_videos_ids, VideoSortField.created, SortDirection.desc))
 
     # convert VAL's status to studio's Video Upload feature status.
     for video in videos:
@@ -331,8 +334,9 @@ def videos_post(course, request):
         )
 
         # persist edx_video_id as uploaded through this course
-        video_meta_data = AssetMetadata(course.id.make_asset_key(VIDEO_ASSET_TYPE, edx_video_id))
-        modulestore().save_asset_metadata(video_meta_data, request.user.id)
+        user_id = request.user.id
+        video_meta_data = AssetMetadata(course.id.make_asset_key(VIDEO_ASSET_TYPE, edx_video_id), created_by=user_id)
+        modulestore().save_asset_metadata(video_meta_data, user_id)
 
         # persist edx_video_id in VAL
         create_video({
@@ -341,6 +345,7 @@ def videos_post(course, request):
             "client_video_id": file_name,
             "duration": 0,
             "encoded_videos": [],
+            "courses": [course.id]
         })
 
         resp_files.append({"file_name": file_name, "upload_url": upload_url})

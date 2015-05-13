@@ -86,7 +86,7 @@ function (HTML5Video, Resizer) {
     //     via the 'state' object. Much easier to work this way - you don't
     //     have to do repeated jQuery element selects.
     function _initialize(state) {
-        var youTubeId, player;
+        var youTubeId, player, userAgent;
 
         // The function is called just once to apply pre-defined configurations
         // by student before video starts playing. Waits until the video's
@@ -96,6 +96,16 @@ function (HTML5Video, Resizer) {
             $(window).on('unload', state.saveState);
 
             if (!state.isFlashMode() && state.speed != '1.0') {
+
+                // Work around a bug in the Youtube API that causes videos to
+                // play at normal speed rather than at the configured speed in
+                // Safari.  Setting the playback rate to 1.0 *after* playing
+                // started and then to the actual value tricks the player into
+                // picking up the speed setting.
+                if (state.browserIsSafari && state.isYoutubeType()) {
+                    state.videoPlayer.setPlaybackRate(1.0, false);
+                }
+
                 state.videoPlayer.setPlaybackRate(state.speed, true);
             }
         });
@@ -125,19 +135,13 @@ function (HTML5Video, Resizer) {
             state.videoPlayer.playerVars.html5 = 1;
         }
 
-        // There is a bug which prevents YouTube API to correctly set the speed
-        // to 1.0 from another speed in Firefox when in HTML5 mode. There is a
-        // fix which basically reloads the video at speed 1.0 when this change
-        // is requested (instead of simply requesting a speed change to 1.0).
-        // This has to be done only when the video is being watched in Firefox.
-        // We need to figure out what browser is currently executing this code.
-        //
-        // TODO: Check the status of
-        // http://code.google.com/p/gdata-issues/issues/detail?id=4654
-        // When the YouTube team fixes the API bug, we can remove this
-        // temporary bug fix.
-        state.browserIsFirefox = navigator.userAgent
-            .toLowerCase().indexOf('firefox') > -1;
+        // Detect the current browser for several browser-specific work-arounds.
+        userAgent = navigator.userAgent.toLowerCase();
+        state.browserIsFirefox = userAgent.indexOf('firefox') > -1;
+        state.browserIsChrome = userAgent.indexOf('chrome') > -1;
+        // Chrome includes both "Chrome" and "Safari" in the user agent.
+        state.browserIsSafari = (userAgent.indexOf('safari') > -1 &&
+                                 !state.browserIsChrome);
 
         if (state.videoType === 'html5') {
             state.videoPlayer.player = new HTML5Video.Player(state.el, {
@@ -316,7 +320,6 @@ function (HTML5Video, Resizer) {
                 // When the video will start playing again from the start, the
                 // start-time and end-time will come back into effect.
                 this.videoPlayer.goToStartTime = true;
-                this.videoPlayer.stopAtEndTime = true;
             }
 
             this.videoPlayer.player.playVideo();
@@ -336,11 +339,9 @@ function (HTML5Video, Resizer) {
             // than end-time. Also, we must make sure that this is only done
             // once per video playing from start to end.
             if (
-                this.videoPlayer.stopAtEndTime &&
                 this.videoPlayer.endTime !== null &&
                 this.videoPlayer.endTime <= this.videoPlayer.currentTime
             ) {
-                this.videoPlayer.stopAtEndTime = false;
 
                 this.videoPlayer.pause();
 
@@ -355,6 +356,18 @@ function (HTML5Video, Resizer) {
         var duration = this.videoPlayer.duration(),
             time = this.videoPlayer.currentTime,
             methodName, youtubeId;
+
+        // There is a bug which prevents YouTube API to correctly set the speed
+        // to 1.0 from another speed in Firefox when in HTML5 mode. There is a
+        // fix which basically reloads the video at speed 1.0 when this change
+        // is requested (instead of simply requesting a speed change to 1.0).
+        // This has to be done only when the video is being watched in Firefox.
+        // We need to figure out what browser is currently executing this code.
+        //
+        // TODO: Check the status of
+        // http://code.google.com/p/gdata-issues/issues/detail?id=4654
+        // When the YouTube team fixes the API bug, we can remove this
+        // temporary bug fix.
 
         // If useCueVideoById is true it will reload video again.
         // Used useCueVideoById to fix the issue video not playing if we change
@@ -447,9 +460,6 @@ function (HTML5Video, Resizer) {
         // After the user seeks, the video will start playing from
         // the sought point, and stop playing at the end.
         this.videoPlayer.goToStartTime = false;
-        if (time > this.videoPlayer.endTime || this.videoPlayer.endTime === null) {
-            this.videoPlayer.stopAtEndTime = false;
-        }
 
         this.videoPlayer.seekTo(time);
         this.videoPlayer.log(
@@ -753,7 +763,6 @@ function (HTML5Video, Resizer) {
             videoPlayer.endTime <= videoPlayer.startTime ||
             videoPlayer.endTime >= duration
         ) {
-            videoPlayer.stopAtEndTime = false;
             videoPlayer.endTime = null;
         } else if (this.isFlashMode()) {
             videoPlayer.endTime /= Number(this.speed);
@@ -806,14 +815,18 @@ function (HTML5Video, Resizer) {
 
     function updatePlayTime(time, skip_seek) {
         var videoPlayer = this.videoPlayer,
-            duration = this.videoPlayer.duration(),
+            endTime = this.videoPlayer.duration(),
             youTubeId;
+
+        if (this.config.endTime) {
+            endTime = Math.min(this.config.endTime, endTime);
+        }
 
         this.trigger(
             'videoProgressSlider.updatePlayTime',
             {
                 time: time,
-                duration: duration
+                duration: endTime
             }
         );
 
@@ -821,7 +834,7 @@ function (HTML5Video, Resizer) {
             'videoControl.updateVcrVidTime',
             {
                 time: time,
-                duration: duration
+                duration: endTime
             }
         );
 

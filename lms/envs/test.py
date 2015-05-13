@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 This config file runs the simplest dev environment using sqlite, and db-based
 sessions. Assumes structure:
@@ -72,6 +73,9 @@ FEATURES['ENABLE_COMBINED_LOGIN_REGISTRATION'] = True
 
 # Need wiki for courseware views to work. TODO (vshnayder): shouldn't need it.
 WIKI_ENABLED = True
+
+# Enable a parental consent age limit for testing
+PARENTAL_CONSENT_AGE_LIMIT = 13
 
 # Makes the tests run much faster...
 SOUTH_TESTS_MIGRATE = False  # To disable migrations and use syncdb instead
@@ -262,6 +266,7 @@ FEATURES['ENABLE_OAUTH2_PROVIDER'] = True
 
 ########################### External REST APIs #################################
 FEATURES['ENABLE_MOBILE_REST_API'] = True
+FEATURES['ENABLE_MOBILE_SOCIAL_FACEBOOK_FEATURES'] = True
 FEATURES['ENABLE_VIDEO_ABSTRACTION_LAYER_API'] = True
 
 ###################### Payment ##############################3
@@ -376,7 +381,7 @@ FEATURES['CLASS_DASHBOARD'] = True
 #   Generated checkid_setup request to http://testserver/openid/provider/login/ with assocication {HMAC-SHA1}{51d49995}{s/kRmA==}
 
 import openid.oidutil
-openid.oidutil.log = lambda message, level = 0: None
+openid.oidutil.log = lambda message, level=0: None
 
 PLATFORM_NAME = "edX"
 SITE_NAME = "edx.org"
@@ -442,7 +447,6 @@ MONGODB_LOG = {
     'db': 'xlog',
 }
 
-
 # Enable EdxNotes for tests.
 FEATURES['ENABLE_EDXNOTES'] = True
 
@@ -454,3 +458,34 @@ FEATURES['MILESTONES_APP'] = True
 
 # ENTRANCE EXAMS
 FEATURES['ENTRANCE_EXAMS'] = True
+
+# Enable courseware search for tests
+FEATURES['ENABLE_COURSEWARE_SEARCH'] = True
+# Use MockSearchEngine as the search engine for test scenario
+SEARCH_ENGINE = "search.tests.mock_search_engine.MockSearchEngine"
+
+FACEBOOK_APP_SECRET = "Test"
+FACEBOOK_APP_ID = "Test"
+FACEBOOK_API_VERSION = "v2.2"
+
+# Certificates Views
+FEATURES['CERTIFICATES_HTML_VIEW'] = True
+
+######### custom courses #########
+INSTALLED_APPS += ('ccx',)
+MIDDLEWARE_CLASSES += ('ccx.overrides.CcxMiddleware',)
+FEATURES['CUSTOM_COURSES_EDX'] = True
+
+# Set dummy values for profile image settings.
+PROFILE_IMAGE_BACKEND = {
+    'class': 'storages.backends.overwrite.OverwriteStorage',
+    'options': {
+        'location': MEDIA_ROOT,
+        'base_url': 'http://example-storage.com/profile-images/',
+    },
+}
+PROFILE_IMAGE_DEFAULT_FILENAME = 'default'
+PROFILE_IMAGE_DEFAULT_FILE_EXTENSION = 'png'
+PROFILE_IMAGE_SECRET_KEY = 'secret'
+PROFILE_IMAGE_MAX_BYTES = 1024 * 1024
+PROFILE_IMAGE_MIN_BYTES = 100

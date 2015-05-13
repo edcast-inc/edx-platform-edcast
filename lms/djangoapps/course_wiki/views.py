@@ -63,7 +63,7 @@ def course_wiki_redirect(request, course_id):  # pylint: disable=unused-argument
             raise ImproperlyConfigured("No site object was created and the SITE_ID doesn't match the newly created one. {} != {}".format(site_id, settings.SITE_ID))
 
     try:
-        urlpath = URLPath.get_by_path(course_slug, select_related=True)
+        urlpath = URLPath.get_by_path(course_slug[0:50], select_related=True)
 
         results = list(Article.objects.filter(id=urlpath.article.id))
         if results:
@@ -125,7 +125,7 @@ def get_or_create_root():
         pass
 
     starting_content = "\n".join((
-        _("Welcome to the edX Wiki"),
+        _("Welcome to the {platform_name} Wiki").format(platform_name=settings.PLATFORM_NAME),
         "===",
         _("Visit a course wiki to add an article."),
     ))

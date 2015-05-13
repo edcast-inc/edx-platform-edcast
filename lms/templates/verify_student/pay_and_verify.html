@@ -23,7 +23,7 @@ from verify_student.views import PayAndVerifyView
 <%block name="header_extras">
     <%
       template_names = (
-          ["webcam_photo", "error"] +
+          ["webcam_photo", "image_input", "error"] +
           [step['templateName'] for step in display_steps]
       )
     %>
@@ -58,7 +58,7 @@ from verify_student.views import PayAndVerifyView
       data-full-name='${user_full_name}'
       data-platform-name='${platform_name}'
       data-course-key='${course_key}'
-      data-course-name='${course.display_name}'
+      data-course-name='${course.display_name|h}'
       data-course-start-date='${course.start_datetime_text()}'
       data-courseware-url='${courseware_url}'
       data-course-mode-name='${course_mode.name}'
@@ -74,6 +74,8 @@ from verify_student.views import PayAndVerifyView
       data-requirements='${json.dumps(requirements)}'
       data-msg-key='${message_key}'
       data-is-active='${is_active}'
+      data-already-verified='${already_verified}'
+      data-verification-good-until='${verification_good_until}'
     ></div>
 
     % if is_active:

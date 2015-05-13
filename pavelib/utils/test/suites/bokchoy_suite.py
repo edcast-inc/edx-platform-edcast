@@ -39,7 +39,6 @@ class BokChoyTestSuite(TestSuite):
         self.default_store = kwargs.get('default_store', None)
         self.verbosity = kwargs.get('verbosity', 2)
         self.extra_args = kwargs.get('extra_args', '')
-        self.ptests = kwargs.get('ptests', False)
         self.har_dir = self.log_dir / 'hars'
         self.imports_dir = kwargs.get('imports_dir', None)
 
@@ -51,7 +50,9 @@ class BokChoyTestSuite(TestSuite):
         self.har_dir.makedirs_p()
         self.report_dir.makedirs_p()
         test_utils.clean_reports_dir()
-        test_utils.clean_test_files()
+
+        if not self.skip_clean:
+            test_utils.clean_test_files()
 
         msg = colorize('green', "Checking for mongo, memchache, and mysql...")
         print(msg)

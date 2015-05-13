@@ -6,18 +6,12 @@ import json
 import random
 import string  # pylint: disable=deprecated-module
 import logging
-
-
-from contentstore.utils import delete_course_and_groups
-from xmodule.fields import Date
-from django.contrib.auth.models import User
-from student.tests.factories import AdminFactory
-from django.views.decorators.csrf import csrf_exempt 
 from django.utils.translation import ugettext as _
 import django.utils
+from contentstore.utils import delete_course_and_groups
 from django.contrib.auth.decorators import login_required
 from django.conf import settings
-from django.views.decorators.http import require_http_methods
+from django.views.decorators.http import require_http_methods, require_GET
 from django.core.exceptions import PermissionDenied
 from django.core.urlresolvers import reverse
 from django.http import HttpResponseBadRequest, HttpResponseNotFound, HttpResponse, Http404
@@ -25,7 +19,7 @@ from util.json_request import JsonResponse, JsonResponseBadRequest
 from util.date_utils import get_default_time_display
 from util.db import generate_int_id, MYSQL_MAX_INT
 from edxmako.shortcuts import render_to_response
-
+from django.views.decorators.csrf import csrf_exempt 
 from xmodule.course_module import DEFAULT_START_DATE
 from xmodule.error_module import ErrorDescriptor
 from xmodule.modulestore.django import modulestore
@@ -41,6 +35,7 @@ from openedx.core.djangoapps.course_groups.partition_scheme import get_cohorted_
 
 from django_future.csrf import ensure_csrf_cookie
 from contentstore.course_info_model import get_course_updates, update_course_updates, delete_course_update
+from contentstore.courseware_index import CoursewareSearchIndexer, SearchIndexingError
 from contentstore.utils import (
     add_instructor,
     initialize_permissions,
@@ -67,10 +62,15 @@ from .component import (
     ADVANCED_COMPONENT_TYPES,
 )
 from contentstore.tasks import rerun_course
-from contentstore.views.entrance_exam import create_entrance_exam, delete_entrance_exam
+from contentstore.views.entrance_exam import (
+    create_entrance_exam,
+    update_entrance_exam,
+    delete_entrance_exam
+)
 
 from .library import LIBRARIES_ENABLED
 from .item import create_xblock_info
+from contentstore.push_notification import push_notification_enabled
 from course_creators.views import get_course_creator_status, add_user_with_status_unrequested
 from contentstore import utils
 from student.roles import (
@@ -83,14 +83,20 @@ from microsite_configuration import microsite
 from xmodule.course_module import CourseFields
 from xmodule.split_test_module import get_split_user_partitions
 from cm_plugin.token import validate_token
+from django.contrib.auth.models import User
+from xmodule.fields import Date
+from student.auth import has_course_author_access
 
 from util.milestones_helpers import (
     set_prerequisite_courses,
     is_valid_course_key
 )
-log = logging.getLogger(__name__)
 
 MINIMUM_GROUP_ID = 100
+
+RANDOM_SCHEME = "random"
+COHORT_SCHEME = "cohort"
+
 
 # Note: the following content group configuration strings are not
 # translated since they are not visible to users.
@@ -99,7 +105,7 @@ CONTENT_GROUP_CONFIGURATION_DESCRIPTION = 'The groups in this configuration can 
 CONTENT_GROUP_CONFIGURATION_NAME = 'Content Group Configuration'
 
 __all__ = ['course_info_handler', 'course_handler', 'course_listing',
-           'course_info_update_handler',
+           'course_info_update_handler', 'course_search_index_handler',
            'course_rerun_handler',
            'settings_handler',
            'grading_handler',
@@ -108,6 +114,9 @@ __all__ = ['course_info_handler', 'course_handler', 'course_listing',
            'textbooks_list_handler', 'textbooks_detail_handler',
            'group_configurations_list_handler', 'group_configurations_detail_handler',
            'cm_course_handler']
+
+log = logging.getLogger(__name__)
+
 
 class AccessListFallback(Exception):
     """
@@ -163,6 +172,15 @@ def cm_course_handler(request, course_id = None):
     else:
         return JsonResponse("{}", status = 404)
 
+def reindex_course_and_check_access(course_key, user):
+    """
+    Internal method used to restart indexing on a course.
+    """
+    if not has_course_author_access(user, course_key):
+        raise PermissionDenied()
+    return CoursewareSearchIndexer.do_course_reindex(modulestore(), course_key)
+
+
 @login_required
 def course_notifications_handler(request, course_key_string=None, action_state_id=None):
     """
@@ -172,7 +190,6 @@ def course_notifications_handler(request, course_key_string=None, action_state_i
 
     For each of these operations, the requesting user must have access to the course;
     else a PermissionDenied error is returned.
-
 
     GET
         json: return json representing information about the notification (action, state, etc)
@@ -321,10 +338,12 @@ def cm_create_new_course(request):
         CourseCreatorRole().add_users(request.user)
         response = _create_or_rerun_course(request)
         response_body = json.loads(response.content)
-
-        course_id = request.json.get('org')+'/'+ \
-                request.json.get('number') + '/' + \
-                request.json.get('run')
+        store = modulestore()
+        with store.default_store('split'):
+            destination_course_key = store.make_course_key(request.json.get('org'),\
+                                           request.json.get('number'), \
+                                           request.json.get('run'))
+        course_id = str(destination_course_key)
         # hacking to try and send the id as we need
         if 'url' in response_body:
             cm_update_course(request, course_id)
@@ -413,6 +432,35 @@ def course_rerun_handler(request, course_key_string):
                 'course_creator_status': _get_course_creator_status(request.user),
                 'allow_unicode_course_id': settings.FEATURES.get('ALLOW_UNICODE_COURSE_ID', False)
             })
+
+
+@login_required
+@ensure_csrf_cookie
+@require_GET
+def course_search_index_handler(request, course_key_string):
+    """
+    The restful handler for course indexing.
+    GET
+        html: return status of indexing task
+        json: return status of indexing task
+    """
+    # Only global staff (PMs) are able to index courses
+    if not GlobalStaff().has_user(request.user):
+        raise PermissionDenied()
+    course_key = CourseKey.from_string(course_key_string)
+    content_type = request.META.get('CONTENT_TYPE', None)
+    if content_type is None:
+        content_type = "application/json; charset=utf-8"
+    with modulestore().bulk_operations(course_key):
+        try:
+            reindex_course_and_check_access(course_key, request.user)
+        except SearchIndexingError as search_err:
+            return HttpResponse(json.dumps({
+                "user_message": search_err.error_list
+            }), content_type=content_type, status=500)
+        return HttpResponse(json.dumps({
+            "user_message": _("Course has been successfully reindexed.")
+        }), content_type=content_type, status=200)
 
 
 def _course_outline_json(request, course_module):
@@ -558,7 +606,7 @@ def course_listing(request):
         'course_creator_status': _get_course_creator_status(request.user),
         'rerun_creator_status': GlobalStaff().has_user(request.user),
         'allow_unicode_course_id': settings.FEATURES.get('ALLOW_UNICODE_COURSE_ID', False),
-        'allow_course_reruns': settings.FEATURES.get('ALLOW_COURSE_RERUNS', False)
+        'allow_course_reruns': settings.FEATURES.get('ALLOW_COURSE_RERUNS', True)
     })
 
 
@@ -580,6 +628,9 @@ def course_index(request, course_key):
     with modulestore().bulk_operations(course_key):
         course_module = get_course_and_check_access(course_key, request.user, depth=None)
         lms_link = get_lms_link_for_item(course_module.location)
+        reindex_link = None
+        if settings.FEATURES.get('ENABLE_COURSEWARE_INDEX', False):
+            reindex_link = "/course/{course_id}/search_reindex".format(course_id=unicode(course_key))
         sections = course_module.get_children()
         course_structure = _course_outline_json(request, course_module)
         locator_to_show = request.REQUEST.get('show', None)
@@ -603,6 +654,7 @@ def course_index(request, course_key):
             'rerun_notification_id': current_action.id if current_action else None,
             'course_release_date': course_release_date,
             'settings_url': settings_url,
+            'reindex_link': reindex_link,
             'notification_dismiss_url': reverse_course_url(
                 'course_notifications_handler',
                 current_action.course_key,
@@ -762,10 +814,7 @@ def _create_new_course(request, org, number, run, fields):
     Returns the URL for the course overview page.
     Raises DuplicateCourseError if the course already exists
     """
-    store_for_new_course = (
-        settings.FEATURES.get('DEFAULT_STORE_FOR_NEW_COURSE') or
-        modulestore().default_modulestore.get_modulestore_type()
-    )
+    store_for_new_course = modulestore().default_modulestore.get_modulestore_type()
     new_course = create_new_course_in_store(store_for_new_course, request.user, org, number, run, fields)
     return JsonResponse({
         'url': reverse_course_url('course_handler', new_course.id),
@@ -861,7 +910,8 @@ def course_info_handler(request, course_key_string):
                     'context_course': course_module,
                     'updates_url': reverse_course_url('course_info_update_handler', course_key),
                     'handouts_locator': course_key.make_usage_key('course_info', 'handouts'),
-                    'base_asset_url': StaticContent.get_base_url_path_for_course_assets(course_module.id)
+                    'base_asset_url': StaticContent.get_base_url_path_for_course_assets(course_module.id),
+                    'push_notification_enabled': push_notification_enabled()
                 }
             )
         else:
@@ -983,9 +1033,10 @@ def settings_handler(request, course_key_string):
                 # if pre-requisite course feature is enabled set pre-requisite course
                 if prerequisite_course_enabled:
                     prerequisite_course_keys = request.json.get('pre_requisite_courses', [])
-                    if not all(is_valid_course_key(course_key) for course_key in prerequisite_course_keys):
-                        return JsonResponseBadRequest({"error": _("Invalid prerequisite course key")})
-                    set_prerequisite_courses(course_key, prerequisite_course_keys)
+                    if prerequisite_course_keys:
+                        if not all(is_valid_course_key(course_key) for course_key in prerequisite_course_keys):
+                            return JsonResponseBadRequest({"error": _("Invalid prerequisite course key")})
+                        set_prerequisite_courses(course_key, prerequisite_course_keys)
 
                 # If the entrance exams feature has been enabled, we'll need to check for some
                 # feature-specific settings and handle them accordingly
@@ -995,16 +1046,24 @@ def settings_handler(request, course_key_string):
                     course_entrance_exam_present = course_module.entrance_exam_enabled
                     entrance_exam_enabled = request.json.get('entrance_exam_enabled', '') == 'true'
                     ee_min_score_pct = request.json.get('entrance_exam_minimum_score_pct', None)
-
-                    # If the entrance exam box on the settings screen has been checked,
-                    # and the course does not already have an entrance exam attached...
-                    if entrance_exam_enabled and not course_entrance_exam_present:
+                    # If the entrance exam box on the settings screen has been checked...
+                    if entrance_exam_enabled:
                         # Load the default minimum score threshold from settings, then try to override it
                         entrance_exam_minimum_score_pct = float(settings.ENTRANCE_EXAM_MIN_SCORE_PCT)
-                        if ee_min_score_pct and ee_min_score_pct != '':
+                        if ee_min_score_pct:
                             entrance_exam_minimum_score_pct = float(ee_min_score_pct)
-                        # Create the entrance exam
-                        create_entrance_exam(request, course_key, entrance_exam_minimum_score_pct)
+                        if entrance_exam_minimum_score_pct.is_integer():
+                            entrance_exam_minimum_score_pct = entrance_exam_minimum_score_pct / 100
+                        entrance_exam_minimum_score_pct = unicode(entrance_exam_minimum_score_pct)
+                        # If there's already an entrance exam defined, we'll update the existing one
+                        if course_entrance_exam_present:
+                            exam_data = {
+                                'entrance_exam_minimum_score_pct': entrance_exam_minimum_score_pct
+                            }
+                            update_entrance_exam(request, course_key, exam_data)
+                        # If there's no entrance exam defined, we'll create a new one
+                        else:
+                            create_entrance_exam(request, course_key, entrance_exam_minimum_score_pct)
 
                     # If the entrance exam box on the settings screen has been unchecked,
                     # and the course has an entrance exam attached...
@@ -1494,19 +1553,38 @@ class GroupConfiguration(object):
         return UserPartition.from_json(self.configuration)
 
     @staticmethod
-    def get_usage_info(course, store):
+    def _get_usage_info(course, unit, item, usage_info, group_id, scheme_name=None):
+        """
+        Get usage info for unit/module.
+        """
+        unit_url = reverse_usage_url(
+            'container_handler',
+            course.location.course_key.make_usage_key(unit.location.block_type, unit.location.name)
+        )
+
+        usage_dict = {'label': u"{} / {}".format(unit.display_name, item.display_name), 'url': unit_url}
+        if scheme_name == RANDOM_SCHEME:
+            validation_summary = item.general_validation_message()
+            usage_dict.update({'validation': validation_summary.to_json() if validation_summary else None})
+
+        usage_info[group_id].append(usage_dict)
+
+        return usage_info
+
+    @staticmethod
+    def get_content_experiment_usage_info(store, course):
         """
         Get usage information for all Group Configurations currently referenced by a split_test instance.
         """
         split_tests = store.get_items(course.id, qualifiers={'category': 'split_test'})
-        return GroupConfiguration._get_usage_info(store, course, split_tests)
+        return GroupConfiguration._get_content_experiment_usage_info(store, course, split_tests)
 
     @staticmethod
-    def get_split_test_partitions_with_usage(course, store):
+    def get_split_test_partitions_with_usage(store, course):
         """
         Returns json split_test group configurations updated with usage information.
         """
-        usage_info = GroupConfiguration.get_usage_info(course, store)
+        usage_info = GroupConfiguration.get_content_experiment_usage_info(store, course)
         configurations = []
         for partition in get_split_user_partitions(course.user_partitions):
             configuration = partition.to_json()
@@ -1515,7 +1593,7 @@ class GroupConfiguration(object):
         return configurations
 
     @staticmethod
-    def _get_usage_info(store, course, split_tests):
+    def _get_content_experiment_usage_info(store, course, split_tests):
         """
         Returns all units names, their urls and validation messages.
 
@@ -1540,28 +1618,70 @@ class GroupConfiguration(object):
             if split_test.user_partition_id not in usage_info:
                 usage_info[split_test.user_partition_id] = []
 
-            unit_location = store.get_parent_location(split_test.location)
-            if not unit_location:
-                log.warning("Parent location of split_test module not found: %s", split_test.location)
+            unit = split_test.get_parent()
+            if not unit:
+                log.warning("Unable to find parent for split_test %s", split_test.location)
                 continue
 
-            try:
-                unit = store.get_item(unit_location)
-            except ItemNotFoundError:
-                log.warning("Unit not found: %s", unit_location)
-                continue
-
-            unit_url = reverse_usage_url(
-                'container_handler',
-                course.location.course_key.make_usage_key(unit.location.block_type, unit.location.name)
+            usage_info = GroupConfiguration._get_usage_info(
+                course=course,
+                unit=unit,
+                item=split_test,
+                usage_info=usage_info,
+                group_id=split_test.user_partition_id,
+                scheme_name=RANDOM_SCHEME
             )
+        return usage_info
 
-            validation_summary = split_test.general_validation_message()
-            usage_info[split_test.user_partition_id].append({
-                'label': u"{} / {}".format(unit.display_name, split_test.display_name),
-                'url': unit_url,
-                'validation': validation_summary.to_json() if validation_summary else None,
-            })
+    @staticmethod
+    def get_content_groups_usage_info(store, course):
+        """
+        Get usage information for content groups.
+        """
+        items = store.get_items(course.id, settings={'group_access': {'$exists': True}})
+
+        return GroupConfiguration._get_content_groups_usage_info(course, items)
+
+    @staticmethod
+    def _get_content_groups_usage_info(course, items):
+        """
+        Returns all units names and their urls.
+
+        Returns:
+        {'group_id':
+            [
+                {
+                    'label': 'Unit 1 / Problem 1',
+                    'url': 'url_to_unit_1'
+                },
+                {
+                    'label': 'Unit 2 / Problem 2',
+                    'url': 'url_to_unit_2'
+                }
+            ],
+        }
+        """
+        usage_info = {}
+        for item in items:
+            if hasattr(item, 'group_access') and item.group_access:
+                (__, group_ids), = item.group_access.items()
+                for group_id in group_ids:
+                    if group_id not in usage_info:
+                        usage_info[group_id] = []
+
+                    unit = item.get_parent()
+                    if not unit:
+                        log.warning("Unable to find parent for component %s", item.location)
+                        continue
+
+                    usage_info = GroupConfiguration._get_usage_info(
+                        course,
+                        unit=unit,
+                        item=item,
+                        usage_info=usage_info,
+                        group_id=group_id
+                    )
+
         return usage_info
 
     @staticmethod
@@ -1571,19 +1691,39 @@ class GroupConfiguration(object):
 
         Returns json of particular group configuration updated with usage information.
         """
-        # Get all Experiments that use particular Group Configuration in course.
-        split_tests = store.get_items(
-            course.id,
-            category='split_test',
-            content={'user_partition_id': configuration.id}
-        )
-        configuration_json = configuration.to_json()
-        usage_information = GroupConfiguration._get_usage_info(store, course, split_tests)
-        configuration_json['usage'] = usage_information.get(configuration.id, [])
+        configuration_json = None
+        # Get all Experiments that use particular  Group Configuration in course.
+        if configuration.scheme.name == RANDOM_SCHEME:
+            split_tests = store.get_items(
+                course.id,
+                category='split_test',
+                content={'user_partition_id': configuration.id}
+            )
+            configuration_json = configuration.to_json()
+            usage_information = GroupConfiguration._get_content_experiment_usage_info(store, course, split_tests)
+            configuration_json['usage'] = usage_information.get(configuration.id, [])
+        elif configuration.scheme.name == COHORT_SCHEME:
+            # In case if scheme is "cohort"
+            configuration_json = GroupConfiguration.update_content_group_usage_info(store, course, configuration)
         return configuration_json
 
     @staticmethod
-    def get_or_create_content_group_configuration(course):
+    def update_content_group_usage_info(store, course, configuration):
+        """
+        Update usage information for particular Content Group Configuration.
+
+        Returns json of particular content group configuration updated with usage information.
+        """
+        usage_info = GroupConfiguration.get_content_groups_usage_info(store, course)
+        content_group_configuration = configuration.to_json()
+
+        for group in content_group_configuration['groups']:
+            group['usage'] = usage_info.get(group['id'], [])
+
+        return content_group_configuration
+
+    @staticmethod
+    def get_or_create_content_group(store, course):
         """
         Returns the first user partition from the course which uses the
         CohortPartitionScheme, or generates one if no such partition is
@@ -1598,9 +1738,58 @@ class GroupConfiguration(object):
                 name=CONTENT_GROUP_CONFIGURATION_NAME,
                 description=CONTENT_GROUP_CONFIGURATION_DESCRIPTION,
                 groups=[],
-                scheme_id='cohort'
+                scheme_id=COHORT_SCHEME
             )
+            return content_group_configuration.to_json()
+
+        content_group_configuration = GroupConfiguration.update_content_group_usage_info(
+            store,
+            course,
+            content_group_configuration
+        )
         return content_group_configuration
+
+
+def remove_content_or_experiment_group(request, store, course, configuration, group_configuration_id, group_id=None):
+    """
+    Remove content group or experiment group configuration only if it's not in use.
+    """
+    configuration_index = course.user_partitions.index(configuration)
+    if configuration.scheme.name == RANDOM_SCHEME:
+        usages = GroupConfiguration.get_content_experiment_usage_info(store, course)
+        used = int(group_configuration_id) in usages
+
+        if used:
+            return JsonResponse(
+                {"error": _("This group configuration is in use and cannot be deleted.")},
+                status=400
+            )
+        course.user_partitions.pop(configuration_index)
+    elif configuration.scheme.name == COHORT_SCHEME:
+        if not group_id:
+            return JsonResponse(status=404)
+
+        group_id = int(group_id)
+        usages = GroupConfiguration.get_content_groups_usage_info(store, course)
+        used = group_id in usages
+
+        if used:
+            return JsonResponse(
+                {"error": _("This content group is in use and cannot be deleted.")},
+                status=400
+            )
+
+        matching_groups = [group for group in configuration.groups if group.id == group_id]
+        if matching_groups:
+            group_index = configuration.groups.index(matching_groups[0])
+            configuration.groups.pop(group_index)
+        else:
+            return JsonResponse(status=404)
+
+        course.user_partitions[configuration_index] = configuration
+
+    store.update_item(course, request.user.id)
+    return JsonResponse(status=204)
 
 
 @require_http_methods(("GET", "POST"))
@@ -1625,12 +1814,12 @@ def group_configurations_list_handler(request, course_key_string):
             course_outline_url = reverse_course_url('course_handler', course_key)
             should_show_experiment_groups = are_content_experiments_enabled(course)
             if should_show_experiment_groups:
-                experiment_group_configurations = GroupConfiguration.get_split_test_partitions_with_usage(course, store)
+                experiment_group_configurations = GroupConfiguration.get_split_test_partitions_with_usage(store, course)
             else:
                 experiment_group_configurations = None
-            content_group_configuration = GroupConfiguration.get_or_create_content_group_configuration(
-                course
-            ).to_json()
+
+            content_group_configuration = GroupConfiguration.get_or_create_content_group(store, course)
+
             return render_to_response('group_configurations.html', {
                 'context_course': course,
                 'group_configuration_url': group_configuration_url,
@@ -1664,7 +1853,7 @@ def group_configurations_list_handler(request, course_key_string):
 @login_required
 @ensure_csrf_cookie
 @require_http_methods(("POST", "PUT", "DELETE"))
-def group_configurations_detail_handler(request, course_key_string, group_configuration_id):
+def group_configurations_detail_handler(request, course_key_string, group_configuration_id, group_id=None):
     """
     JSON API endpoint for manipulating a group configuration via its internal ID.
     Used by the Backbone application.
@@ -1698,22 +1887,19 @@ def group_configurations_detail_handler(request, course_key_string, group_config
             store.update_item(course, request.user.id)
             configuration = GroupConfiguration.update_usage_info(store, course, new_configuration)
             return JsonResponse(configuration, status=201)
+
         elif request.method == "DELETE":
             if not configuration:
                 return JsonResponse(status=404)
 
-            # Verify that group configuration is not already in use.
-            usages = GroupConfiguration.get_usage_info(course, store)
-            if usages.get(int(group_configuration_id)):
-                return JsonResponse(
-                    {"error": _("This Group Configuration is already in use and cannot be removed.")},
-                    status=400
-                )
-
-            index = course.user_partitions.index(configuration)
-            course.user_partitions.pop(index)
-            store.update_item(course, request.user.id)
-            return JsonResponse(status=204)
+            return remove_content_or_experiment_group(
+                request=request,
+                store=store,
+                course=course,
+                configuration=configuration,
+                group_configuration_id=group_configuration_id,
+                group_id=group_id
+            )
 
 
 def are_content_experiments_enabled(course):

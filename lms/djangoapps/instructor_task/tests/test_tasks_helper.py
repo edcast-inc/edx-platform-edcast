@@ -18,7 +18,7 @@ from xmodule.partitions.partitions import Group, UserPartition
 
 from openedx.core.djangoapps.course_groups.models import CourseUserGroupPartitionGroup
 from openedx.core.djangoapps.course_groups.tests.helpers import CohortFactory
-import openedx.core.djangoapps.user_api.api.course_tag as course_tag_api
+import openedx.core.djangoapps.user_api.course_tag.api as course_tag_api
 from openedx.core.djangoapps.user_api.partition_schemes import RandomUserPartitionScheme
 from instructor_task.models import ReportStore
 from instructor_task.tasks_helper import cohort_students_and_upload, upload_grades_csv, upload_students_csv
@@ -31,6 +31,7 @@ class TestInstructorGradeReport(TestReportMixin, InstructorTaskCourseTestCase):
     Tests that CSV grade report generation works.
     """
     def setUp(self):
+        super(TestInstructorGradeReport, self).setUp()
         self.course = CourseFactory.create()
 
     @ddt.data([u'student@example.com', u'ni\xf1o@example.com'])
@@ -263,6 +264,7 @@ class TestStudentReport(TestReportMixin, InstructorTaskCourseTestCase):
     Tests that CSV student profile report generation works.
     """
     def setUp(self):
+        super(TestStudentReport, self).setUp()
         self.course = CourseFactory.create()
 
     def test_success(self):
@@ -318,6 +320,8 @@ class TestCohortStudents(TestReportMixin, InstructorTaskCourseTestCase):
     Tests that bulk student cohorting works.
     """
     def setUp(self):
+        super(TestCohortStudents, self).setUp()
+
         self.course = CourseFactory.create()
         self.cohort_1 = CohortFactory(course_id=self.course.id, name='Cohort 1')
         self.cohort_2 = CohortFactory(course_id=self.course.id, name='Cohort 2')

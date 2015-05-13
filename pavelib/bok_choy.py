@@ -82,7 +82,6 @@ def perf_report_bokchoy(options):
         'imports_dir': getattr(options, 'imports_dir', None),
         'verbosity': getattr(options, 'verbosity', 2),
         'test_dir': 'performance',
-        'ptests': True,
     }
     run_bokchoy(**opts)
 
@@ -95,8 +94,9 @@ def run_bokchoy(**opts):
     msg = colorize(
         'green',
         'Running tests using {default_store} modulestore.'.format(
-            default_store=test_suite.default_store)
+            default_store=test_suite.default_store,
         )
+    )
     print(msg)
     test_suite.run()
 

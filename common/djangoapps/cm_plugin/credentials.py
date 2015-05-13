@@ -2,8 +2,14 @@ from yaml import load
 from yaml import YAMLObject, Loader, Dumper
 import logging
 import re
+from django.conf import settings
 log = logging.getLogger(__name__)
-CRED_FILE = '/edx/app/edxapp/meta_data.yml'
+
+if settings.LMS_TEST_ENV or settings.CMS_TEST_ENV:
+    CRED_FILE = '/edx/app/edxapp/test_meta_data.yml'
+else:
+    CRED_FILE = '/edx/app/edxapp/meta_data.yml'
+
 
 class ImmutableMash(YAMLObject):
     """
@@ -62,7 +68,7 @@ def _environment():
 
 def _api_key():
     with open(CRED_FILE, 'r') as y:
-        return load(y)[':credentials'][0].value[1][1].value
+        return load(y)[':credentials'][0].value[0][1].value
 
 def _shared_secret():
     with open(CRED_FILE, 'r') as y:

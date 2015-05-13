@@ -5,6 +5,7 @@ from importlib import import_module
 from opaque_keys.edx.keys import UsageKey
 from unittest import TestCase
 from xblock.fields import XBlockMixin
+from xmodule.x_module import XModuleMixin
 from xmodule.modulestore import ModuleStoreEnum
 from xmodule.modulestore.draft_and_published import ModuleStoreDraftAndPublished
 from xmodule.modulestore.edit_info import EditInfoMixin
@@ -34,7 +35,8 @@ def create_modulestore_instance(
         options,
         i18n_service=None,
         fs_service=None,
-        user_service=None
+        user_service=None,
+        signal_handler=None,
 ):
     """
     This will return a new instance of a modulestore given an engine and options
@@ -47,6 +49,7 @@ def create_modulestore_instance(
     return class_(
         doc_store_config=doc_store_config,
         contentstore=contentstore,
+        signal_handler=signal_handler,
         **options
     )
 
@@ -82,7 +85,7 @@ class MixedSplitTestCase(TestCase):
         'default_class': 'xmodule.raw_module.RawDescriptor',
         'fs_root': DATA_DIR,
         'render_template': RENDER_TEMPLATE,
-        'xblock_mixins': (EditInfoMixin, InheritanceMixin, LocationMixin),
+        'xblock_mixins': (EditInfoMixin, InheritanceMixin, LocationMixin, XModuleMixin),
     }
     DOC_STORE_CONFIG = {
         'host': MONGO_HOST,

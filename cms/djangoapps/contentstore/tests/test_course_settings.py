@@ -6,7 +6,8 @@ import json
 import copy
 import mock
 from mock import patch
-
+import unittest
+from unittest import skip
 from django.utils.timezone import UTC
 from django.test.utils import override_settings
 from django.conf import settings
@@ -116,6 +117,7 @@ class CourseDetailsTestCase(CourseTestCase):
             jsondetails.course_image_name
         )
 
+    @skip('we remove view in studio')
     @override_settings(MKTG_URLS={'ROOT': 'dummy-root'})
     def test_marketing_site_fetch(self):
         settings_details_url = get_url(self.course.id)
@@ -139,19 +141,9 @@ class CourseDetailsTestCase(CourseTestCase):
             self.assertNotContains(response, "Course Introduction Video")
             self.assertNotContains(response, "Requirements")
 
-    def _seed_milestone_relationship_types(self):
-        """
-        Helper method to prepopulate MRTs so the tests can run
-        Note the settings check -- exams feature must be enabled for the tests to run correctly
-        """
-        if settings.FEATURES.get('ENTRANCE_EXAMS', False):
-            from milestones.models import MilestoneRelationshipType
-            MilestoneRelationshipType.objects.create(name='requires')
-            MilestoneRelationshipType.objects.create(name='fulfills')
-
-    @patch.dict(settings.FEATURES, {'ENTRANCE_EXAMS': True})
-    def test_entrance_exam_created_and_deleted_successfully(self):
-        self._seed_milestone_relationship_types()
+    @unittest.skipUnless(settings.FEATURES.get('ENTRANCE_EXAMS', False), True)
+    def test_entrance_exam_created_updated_and_deleted_successfully(self):
+        seed_milestone_relationship_types()
         settings_details_url = get_url(self.course.id)
         data = {
             'entrance_exam_enabled': 'true',
@@ -169,6 +161,20 @@ class CourseDetailsTestCase(CourseTestCase):
         self.assertTrue(course.entrance_exam_enabled)
         self.assertEquals(course.entrance_exam_minimum_score_pct, .60)
 
+        # Update the entrance exam
+        data['entrance_exam_enabled'] = "true"
+        data['entrance_exam_minimum_score_pct'] = "80"
+        response = self.client.post(
+            settings_details_url,
+            data=json.dumps(data),
+            content_type='application/json',
+            HTTP_ACCEPT='application/json'
+        )
+        self.assertEquals(response.status_code, 200)
+        course = modulestore().get_course(self.course.id)
+        self.assertTrue(course.entrance_exam_enabled)
+        self.assertEquals(course.entrance_exam_minimum_score_pct, .80)
+
         # Delete the entrance exam
         data['entrance_exam_enabled'] = "false"
         response = self.client.post(
@@ -182,13 +188,13 @@ class CourseDetailsTestCase(CourseTestCase):
         self.assertFalse(course.entrance_exam_enabled)
         self.assertEquals(course.entrance_exam_minimum_score_pct, None)
 
-    @patch.dict(settings.FEATURES, {'ENTRANCE_EXAMS': True})
+    @unittest.skipUnless(settings.FEATURES.get('ENTRANCE_EXAMS', False), True)
     def test_entrance_exam_store_default_min_score(self):
         """
         test that creating an entrance exam should store the default value, if key missing in json request
         or entrance_exam_minimum_score_pct is an empty string
         """
-        self._seed_milestone_relationship_types()
+        seed_milestone_relationship_types()
         settings_details_url = get_url(self.course.id)
         test_data_1 = {
             'entrance_exam_enabled': 'true',
@@ -240,15 +246,16 @@ class CourseDetailsTestCase(CourseTestCase):
             response = self.client.get_html(settings_details_url)
             self.assertNotContains(response, "Course Short Description")
 
+    @skip('we remove view in studio')
     def test_regular_site_fetch(self):
         settings_details_url = get_url(self.course.id)
 
         with mock.patch.dict('django.conf.settings.FEATURES', {'ENABLE_MKTG_SITE': False}):
             response = self.client.get_html(settings_details_url)
             # we comment this line out in the template
-            # self.assertContains(response, "Course Summary Page")
+            self.assertContains(response, "Course Summary Page")
             # we comment this line out in the template
-            # self.assertContains(response, "Send a note to students via email")
+            self.assertContains(response, "Send a note to students via email")
             self.assertNotContains(response, "course summary page will not be viewable")
 
             self.assertContains(response, "Course Start Date")

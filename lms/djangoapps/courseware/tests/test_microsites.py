@@ -7,7 +7,6 @@ from django.core.urlresolvers import reverse
 from django.test.utils import override_settings
 
 from courseware.tests.helpers import LoginEnrollmentTestCase
-from xmodule.modulestore.tests.django_utils import TEST_DATA_MOCK_MODULESTORE
 from course_modes.models import CourseMode
 from xmodule.course_module import (
     CATALOG_VISIBILITY_CATALOG_AND_ABOUT, CATALOG_VISIBILITY_NONE)
@@ -15,7 +14,6 @@ from xmodule.modulestore.tests.factories import CourseFactory, ItemFactory
 from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
 
 
-@override_settings(MODULESTORE=TEST_DATA_MOCK_MODULESTORE)
 class TestMicrosites(ModuleStoreTestCase, LoginEnrollmentTestCase):
     """
     This is testing of the Microsite feature
@@ -24,6 +22,8 @@ class TestMicrosites(ModuleStoreTestCase, LoginEnrollmentTestCase):
     STUDENT_INFO = [('view@test.com', 'foo'), ('view2@test.com', 'foo')]
 
     def setUp(self):
+        super(TestMicrosites, self).setUp()
+
         # use a different hostname to test Microsites since they are
         # triggered on subdomain mappings
         #
@@ -69,7 +69,7 @@ class TestMicrosites(ModuleStoreTestCase, LoginEnrollmentTestCase):
             self.activate_user(email)
 
     @skip("we dont use this")
-    @override_settings(SITE_NAME=MICROSITE_TEST_HOSTNAME)
+    @override_settings(SITE_NAME=settings.MICROSITE_TEST_HOSTNAME)
     def test_microsite_anonymous_homepage_content(self):
         """
         Verify that the homepage, when accessed via a Microsite domain, returns

@@ -9,6 +9,12 @@ import aes
 from credentials import cm_credentials
 import urllib
 
+# ugly.
+# this is the mother of all insecure authentication systems.
+# TODO: share secret key between edx and cm and send token values
+# with AES encryption.
+
+
 class ExternalAuthMiddleware(object):
 
     def auth_user(self, request, email):
@@ -27,7 +33,12 @@ class ExternalAuthMiddleware(object):
                 raise # probably memcache is down
 
 
-    def process_request(self, request):        
+    def process_request(self, request):
+        # ugly hack 1
+        # authenticate user based on email. This will be a non persistent authentication
+        # required to bypass djangos @login_required decorator. no session or cookie can
+        # be set here.
+        
         if request.method == 'GET':
             token = request.GET.get('token', '')
 		
@@ -48,6 +59,11 @@ class ExternalAuthMiddleware(object):
 
 
     def process_response(self, request, response):
+        # ugly hack 2
+        # this takes the response from the logged in view, authenticates the user again based on token,
+        # adds user session to memcache and sends a cookie back to browser.
+        # This makes sure that the entire auth process is successful.
+
         token = request.GET.get('token', '')
         user = None
         if hasattr(request, 'user'):

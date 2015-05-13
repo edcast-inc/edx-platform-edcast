@@ -40,20 +40,7 @@ class VideoUploadTestMixin(object):
             "course_video_upload_token": self.test_token,
         }
         self.save_course()
-        self.profiles = [
-            {
-                "profile_name": "profile1",
-                "extension": "mp4",
-                "width": 640,
-                "height": 480,
-            },
-            {
-                "profile_name": "profile2",
-                "extension": "mp4",
-                "width": 1920,
-                "height": 1080,
-            },
-        ]
+        self.profiles = ["profile1", "profile2"]
         self.previous_uploads = [
             {
                 "edx_video_id": "test1",
@@ -96,6 +83,20 @@ class VideoUploadTestMixin(object):
                     },
                 ]
             },
+        ]
+        # Ensure every status string is tested
+        self.previous_uploads += [
+            {
+                "edx_video_id": "status_test_{}".format(status),
+                "client_video_id": "status_test.mp4",
+                "duration": 3.14,
+                "status": status,
+                "encoded_videos": [],
+            }
+            for status in (
+                StatusDisplayStrings._STATUS_MAP.keys() +  # pylint:disable=protected-access
+                ["non_existent_status"]
+            )
         ]
         for profile in self.profiles:
             create_profile(profile)
@@ -162,8 +163,9 @@ class VideosHandlerTestCase(VideoUploadTestMixin, CourseTestCase):
         self.assertEqual(response.status_code, 200)
         response_videos = json.loads(response.content)["videos"]
         self.assertEqual(len(response_videos), len(self.previous_uploads))
-        for response_video in response_videos:
-            original_video = self._get_previous_upload(response_video["edx_video_id"])
+        for i, response_video in enumerate(response_videos):
+            # Videos should be returned by creation date descending
+            original_video = self.previous_uploads[-(i + 1)]
             self.assertEqual(
                 set(response_video.keys()),
                 set(["edx_video_id", "client_video_id", "created", "duration", "status"])
@@ -287,12 +289,12 @@ class VideosHandlerTestCase(VideoUploadTestMixin, CourseTestCase):
                 headers={"Content-Type": file_info["content_type"]}
             )
 
-            # Ensure asset store was updated
-            self.assertIsNotNone(
-                modulestore().find_asset_metadata(
-                    self.course.id.make_asset_key(VIDEO_ASSET_TYPE, video_id)
-                )
+            # Ensure asset store was updated and the created_by field was set
+            asset_metadata = modulestore().find_asset_metadata(
+                self.course.id.make_asset_key(VIDEO_ASSET_TYPE, video_id)
             )
+            self.assertIsNotNone(asset_metadata)
+            self.assertEquals(asset_metadata.created_by, self.user.id)
 
             # Ensure VAL was updated
             val_info = get_video_info(video_id)
@@ -300,6 +302,7 @@ class VideosHandlerTestCase(VideoUploadTestMixin, CourseTestCase):
             self.assertEqual(val_info["client_video_id"], file_info["file_name"])
             self.assertEqual(val_info["status"], "upload")
             self.assertEqual(val_info["duration"], 0)
+            self.assertEqual(val_info["courses"], [unicode(self.course.id)])
 
             # Ensure response is correct
             response_file = response_obj["files"][i]
@@ -338,14 +341,14 @@ class VideoUrlsCsvTestCase(VideoUploadTestMixin, CourseTestCase):
                 ["{} URL".format(profile) for profile in expected_profiles]
             )
         )
-        actual_video_ids = []
-        for row in reader:
+        rows = list(reader)
+        self.assertEqual(len(rows), len(self.previous_uploads))
+        for i, row in enumerate(rows):
             response_video = {
                 key.decode("utf-8"): value.decode("utf-8") for key, value in row.items()
             }
-            self.assertNotIn(response_video["Video ID"], actual_video_ids)
-            actual_video_ids.append(response_video["Video ID"])
-            original_video = self._get_previous_upload(response_video["Video ID"])
+            # Videos should be returned by creation date descending
+            original_video = self.previous_uploads[-(i + 1)]
             self.assertEqual(response_video["Name"], original_video["client_video_id"])
             self.assertEqual(response_video["Duration"], str(original_video["duration"]))
             dateutil.parser.parse(response_video["Date Added"])
@@ -365,7 +368,6 @@ class VideoUrlsCsvTestCase(VideoUploadTestMixin, CourseTestCase):
                     self.assertEqual(response_profile_url, original_encoded_for_profile["url"])
                 else:
                     self.assertEqual(response_profile_url, "")
-        self.assertEqual(len(actual_video_ids), len(self.previous_uploads))
 
     def test_basic(self):
         self._check_csv_response(["profile1"])

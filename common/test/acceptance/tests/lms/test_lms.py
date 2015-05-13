@@ -3,6 +3,7 @@
 End-to-end tests for the LMS.
 """
 
+from flaky import flaky
 from textwrap import dedent
 from unittest import skip
 from nose.plugins.attrib import attr
@@ -11,6 +12,7 @@ from bok_choy.promise import EmptyPromise
 from bok_choy.web_app_test import WebAppTest
 from ..helpers import (
     UniqueCourseTest,
+    EventsTestMixin,
     load_data_str,
     generate_course_key,
     select_option_by_value,
@@ -19,8 +21,6 @@ from ..helpers import (
 from ...pages.lms.auto_auth import AutoAuthPage
 from ...pages.lms.create_mode import ModeCreationPage
 from ...pages.common.logout import LogoutPage
-from ...pages.lms.find_courses import FindCoursesPage
-from ...pages.lms.course_about import CourseAboutPage
 from ...pages.lms.course_info import CourseInfoPage
 from ...pages.lms.tab_nav import TabNavPage
 from ...pages.lms.course_nav import CourseNavPage
@@ -33,50 +33,8 @@ from ...pages.studio.settings import SettingsPage
 from ...pages.lms.login_and_register import CombinedLoginAndRegisterPage
 from ...pages.lms.track_selection import TrackSelectionPage
 from ...pages.lms.pay_and_verify import PaymentAndVerificationFlow, FakePaymentPage
-from ...pages.studio.settings import SettingsPage
+from ...pages.lms.course_wiki import CourseWikiPage, CourseWikiEditPage
 from ...fixtures.course import CourseFixture, XBlockFixtureDesc, CourseUpdateDesc
-
-
-class RegistrationTest(UniqueCourseTest):
-    """
-    Test the registration process.
-    """
-
-    def setUp(self):
-        """
-        Initialize pages and install a course fixture.
-        """
-        super(RegistrationTest, self).setUp()
-
-        self.find_courses_page = FindCoursesPage(self.browser)
-        self.course_about_page = CourseAboutPage(self.browser, self.course_id)
-
-        # Create a course to register for
-        CourseFixture(
-            self.course_info['org'], self.course_info['number'],
-            self.course_info['run'], self.course_info['display_name']
-        ).install()
-
-    def test_register(self):
-
-        # Visit the main page with the list of courses
-        self.find_courses_page.visit()
-
-        # Go to the course about page and click the register button
-        self.course_about_page.visit()
-        register_page = self.course_about_page.register()
-
-        # Fill in registration info and submit
-        username = "test_" + self.unique_id[0:6]
-        register_page.provide_info(
-            username + "@example.com", "test", username, "Test User"
-        )
-        dashboard = register_page.submit()
-
-        # We should end up at the dashboard
-        # Check that we're registered for the course
-        course_names = dashboard.available_courses
-        self.assertIn(self.course_info['display_name'], course_names)
 
 
 @attr('shard_1')
@@ -129,6 +87,7 @@ class LoginFromCombinedPageTest(UniqueCourseTest):
         self.login_page.visit().toggle_form()
         self.assertEqual(self.login_page.current_form, "register")
 
+    @flaky  # TODO fix this, see ECOM-1165
     def test_password_reset_success(self):
         # Create a user account
         email, password = self._create_unique_user()  # pylint: disable=unused-variable
@@ -214,6 +173,12 @@ class RegisterFromCombinedPageTest(UniqueCourseTest):
         course_names = self.dashboard_page.wait_for_page().available_courses
         self.assertIn(self.course_info["display_name"], course_names)
 
+        self.assertEqual("want to change your account settings?", self.dashboard_page.sidebar_menu_title.lower())
+        self.assertEqual(
+            "click the arrow next to your username above.",
+            self.dashboard_page.sidebar_menu_description.lower()
+        )
+
     def test_register_failure(self):
         # Navigate to the registration page
         self.register_page.visit()
@@ -242,9 +207,8 @@ class RegisterFromCombinedPageTest(UniqueCourseTest):
         self.assertEqual(self.register_page.current_form, "login")
 
 
-@skip('ECOM-956: Failing intermittently due to 500 errors when trying to hit the mode creation endpoint.')
 @attr('shard_1')
-class PayAndVerifyTest(UniqueCourseTest):
+class PayAndVerifyTest(EventsTestMixin, UniqueCourseTest):
     """Test that we can proceed through the payment and verification flow."""
     def setUp(self):
         """Initialize the test.
@@ -253,12 +217,13 @@ class PayAndVerifyTest(UniqueCourseTest):
         create a user and log them in.
         """
         super(PayAndVerifyTest, self).setUp()
-        self.track_selection_page = TrackSelectionPage(self.browser, self.course_id, separate_verified=True)
+
+        self.track_selection_page = TrackSelectionPage(self.browser, self.course_id)
         self.payment_and_verification_flow = PaymentAndVerificationFlow(self.browser, self.course_id)
         self.immediate_verification_page = PaymentAndVerificationFlow(self.browser, self.course_id, entry_point='verify-now')
         self.upgrade_page = PaymentAndVerificationFlow(self.browser, self.course_id, entry_point='upgrade')
         self.fake_payment_page = FakePaymentPage(self.browser, self.course_id)
-        self.dashboard_page = DashboardPage(self.browser, separate_verified=True)
+        self.dashboard_page = DashboardPage(self.browser)
 
         # Create a course
         CourseFixture(
@@ -274,11 +239,12 @@ class PayAndVerifyTest(UniqueCourseTest):
         # Add a verified mode to the course
         ModeCreationPage(self.browser, self.course_id, mode_slug=u'verified', mode_display_name=u'Verified Certificate', min_price=10, suggested_prices='10,20').visit()
 
+    @skip("Flaky 02/02/2015")
     def test_immediate_verification_enrollment(self):
         # Create a user and log them in
-        AutoAuthPage(self.browser).visit()
+        student_id = AutoAuthPage(self.browser).visit().get_user_id()
 
-        # Navigate to the track selection page with the appropriate GET parameter in the URL
+        # Navigate to the track selection page
         self.track_selection_page.visit()
 
         # Enter the payment and verification flow by choosing to enroll as verified
@@ -289,6 +255,22 @@ class PayAndVerifyTest(UniqueCourseTest):
 
         # Submit payment
         self.fake_payment_page.submit_payment()
+
+        # Expect enrollment activated event
+        self.assert_event_emitted_num_times(
+            "edx.course.enrollment.activated",
+            self.start_time,
+            student_id,
+            1
+        )
+
+        # Expect that one mode_changed enrollment event fired as part of the upgrade
+        self.assert_event_emitted_num_times(
+            "edx.course.enrollment.mode_changed",
+            self.start_time,
+            student_id,
+            1
+        )
 
         # Proceed to verification
         self.payment_and_verification_flow.immediate_verification()
@@ -304,7 +286,7 @@ class PayAndVerifyTest(UniqueCourseTest):
         # Submit photos and proceed to the enrollment confirmation step
         self.payment_and_verification_flow.next_verification_step(self.immediate_verification_page)
 
-        # Navigate to the dashboard with the appropriate GET parameter in the URL
+        # Navigate to the dashboard
         self.dashboard_page.visit()
 
         # Expect that we're enrolled as verified in the course
@@ -313,9 +295,9 @@ class PayAndVerifyTest(UniqueCourseTest):
 
     def test_deferred_verification_enrollment(self):
         # Create a user and log them in
-        AutoAuthPage(self.browser).visit()
+        student_id = AutoAuthPage(self.browser).visit().get_user_id()
 
-        # Navigate to the track selection page with the appropriate GET parameter in the URL
+        # Navigate to the track selection page
         self.track_selection_page.visit()
 
         # Enter the payment and verification flow by choosing to enroll as verified
@@ -327,7 +309,15 @@ class PayAndVerifyTest(UniqueCourseTest):
         # Submit payment
         self.fake_payment_page.submit_payment()
 
-        # Navigate to the dashboard with the appropriate GET parameter in the URL
+        # Expect enrollment activated event
+        self.assert_event_emitted_num_times(
+            "edx.course.enrollment.activated",
+            self.start_time,
+            student_id,
+            1
+        )
+
+        # Navigate to the dashboard
         self.dashboard_page.visit()
 
         # Expect that we're enrolled as verified in the course
@@ -336,9 +326,9 @@ class PayAndVerifyTest(UniqueCourseTest):
 
     def test_enrollment_upgrade(self):
         # Create a user, log them in, and enroll them in the honor mode
-        AutoAuthPage(self.browser, course_id=self.course_id).visit()
+        student_id = AutoAuthPage(self.browser, course_id=self.course_id).visit().get_user_id()
 
-        # Navigate to the dashboard with the appropriate GET parameter in the URL
+        # Navigate to the dashboard
         self.dashboard_page.visit()
 
         # Expect that we're enrolled as honor in the course
@@ -357,7 +347,23 @@ class PayAndVerifyTest(UniqueCourseTest):
         # Submit payment
         self.fake_payment_page.submit_payment()
 
-        # Navigate to the dashboard with the appropriate GET parameter in the URL
+        # Expect that one mode_changed enrollment event fired as part of the upgrade
+        self.assert_event_emitted_num_times(
+            "edx.course.enrollment.mode_changed",
+            self.start_time,
+            student_id,
+            1
+        )
+
+        # Expect no enrollment activated event
+        self.assert_event_emitted_num_times(
+            "edx.course.enrollment.activated",
+            self.start_time,
+            student_id,
+            0
+        )
+
+        # Navigate to the dashboard
         self.dashboard_page.visit()
 
         # Expect that we're enrolled as verified in the course
@@ -365,59 +371,57 @@ class PayAndVerifyTest(UniqueCourseTest):
         self.assertEqual(enrollment_mode, 'verified')
 
 
-class LanguageTest(WebAppTest):
+class CourseWikiTest(UniqueCourseTest):
     """
-    Tests that the change language functionality on the dashboard works
+    Tests that verify the course wiki.
     """
 
     def setUp(self):
         """
-        Initiailize dashboard page
+        Initialize pages and install a course fixture.
         """
-        super(LanguageTest, self).setUp()
-        self.dashboard_page = DashboardPage(self.browser)
+        super(CourseWikiTest, self).setUp()
 
-        self.test_new_lang = 'eo'
-        # This string is unicode for "ÇÜRRÉNT ÇØÜRSÉS", which should appear in our Dummy Esperanto page
-        # We store the string this way because Selenium seems to try and read in strings from
-        # the HTML in this format. Ideally we could just store the raw ÇÜRRÉNT ÇØÜRSÉS string here
-        self.current_courses_text = u'\xc7\xdcRR\xc9NT \xc7\xd6\xdcRS\xc9S'
+        # self.course_info['number'] must be shorter since we are accessing the wiki. See TNL-1751
+        self.course_info['number'] = self.unique_id[0:6]
 
-        self.username = "test"
-        self.password = "testpass"
-        self.email = "test@example.com"
+        self.course_info_page = CourseInfoPage(self.browser, self.course_id)
+        self.course_wiki_page = CourseWikiPage(self.browser, self.course_id)
+        self.course_info_page = CourseInfoPage(self.browser, self.course_id)
+        self.course_wiki_edit_page = CourseWikiEditPage(self.browser, self.course_id, self.course_info)
+        self.tab_nav = TabNavPage(self.browser)
 
-    def test_change_lang(self):
-        AutoAuthPage(self.browser).visit()
-        self.dashboard_page.visit()
-        # Change language to Dummy Esperanto
-        self.dashboard_page.change_language(self.test_new_lang)
+        CourseFixture(
+            self.course_info['org'], self.course_info['number'],
+            self.course_info['run'], self.course_info['display_name']
+        ).install()
 
-        changed_text = self.dashboard_page.current_courses_text
+        # Auto-auth register for the course
+        AutoAuthPage(self.browser, course_id=self.course_id).visit()
 
-        # We should see the dummy-language text on the page
-        self.assertIn(self.current_courses_text, changed_text)
+        # Access course wiki page
+        self.course_info_page.visit()
+        self.tab_nav.go_to_tab('Wiki')
 
-    def test_language_persists(self):
-        auto_auth_page = AutoAuthPage(self.browser, username=self.username, password=self.password, email=self.email)
-        auto_auth_page.visit()
+    def _open_editor(self):
+        self.course_wiki_page.open_editor()
+        self.course_wiki_edit_page.wait_for_page()
 
-        self.dashboard_page.visit()
-        # Change language to Dummy Esperanto
-        self.dashboard_page.change_language(self.test_new_lang)
+    def test_edit_course_wiki(self):
+        """
+        Wiki page by default is editable for students.
 
-        # destroy session
-        self.browser.delete_all_cookies()
+        After accessing the course wiki,
+        Replace the content of the default page
+        Confirm new content has been saved
 
-        # log back in
-        auto_auth_page.visit()
-
-        self.dashboard_page.visit()
-
-        changed_text = self.dashboard_page.current_courses_text
-
-        # We should see the dummy-language text on the page
-        self.assertIn(self.current_courses_text, changed_text)
+        """
+        content = "hello"
+        self._open_editor()
+        self.course_wiki_edit_page.replace_wiki_content(content)
+        self.course_wiki_edit_page.save_wiki_content()
+        actual_content = unicode(self.course_wiki_page.q(css='.wiki-article p').text[0])
+        self.assertEqual(content, actual_content)
 
 
 class HighLevelTabTest(UniqueCourseTest):
@@ -430,6 +434,9 @@ class HighLevelTabTest(UniqueCourseTest):
         Initialize pages and install a course fixture.
         """
         super(HighLevelTabTest, self).setUp()
+
+        # self.course_info['number'] must be shorter since we are accessing the wiki. See TNL-1751
+        self.course_info['number'] = self.unique_id[0:6]
 
         self.course_info_page = CourseInfoPage(self.browser, self.course_id)
         self.progress_page = ProgressPage(self.browser, self.course_id)
@@ -509,6 +516,26 @@ class HighLevelTabTest(UniqueCourseTest):
         self.course_info_page.visit()
         self.tab_nav.go_to_tab('Test Static Tab')
         self.assertTrue(self.tab_nav.is_on_tab('Test Static Tab'))
+
+    def test_wiki_tab_first_time(self):
+        """
+        Navigate to the course wiki tab. When the wiki is accessed for
+        the first time, it is created on the fly.
+        """
+
+        course_wiki = CourseWikiPage(self.browser, self.course_id)
+        # From the course info page, navigate to the wiki tab
+        self.course_info_page.visit()
+        self.tab_nav.go_to_tab('Wiki')
+        self.assertTrue(self.tab_nav.is_on_tab('Wiki'))
+
+        # Assert that a default wiki is created
+        expected_article_name = "{org}.{course_number}.{course_run}".format(
+            org=self.course_info['org'],
+            course_number=self.course_info['number'],
+            course_run=self.course_info['run']
+        )
+        self.assertEqual(expected_article_name, course_wiki.article_name)
 
     def test_courseware_nav(self):
         """
@@ -859,7 +886,7 @@ class PreRequisiteCourseTest(UniqueCourseTest):
         """
         set pre-requisite course
         """
-        select_option_by_value(self.settings_page.pre_requisite_course, self.pre_requisite_course_id)
+        select_option_by_value(self.settings_page.pre_requisite_course_options, self.pre_requisite_course_id)
         self.settings_page.save_changes()
 
 
@@ -957,7 +984,7 @@ class EntranceExamTest(UniqueCourseTest):
             self.course_info['run'], self.course_info['display_name']
         ).install()
 
-        self.course_info_page = CourseInfoPage(self.browser, self.course_id)
+        self.courseware_page = CoursewarePage(self.browser, self.course_id)
         self.settings_page = SettingsPage(
             self.browser,
             self.course_info['org'],
@@ -970,19 +997,19 @@ class EntranceExamTest(UniqueCourseTest):
 
     def test_entrance_exam_section(self):
         """
-         Scenario: Any course that is enabled for an entrance exam, should have entrance exam section at course info
+         Scenario: Any course that is enabled for an entrance exam, should have entrance exam chapter at courseware
          page.
-            Given that I am on the course info page
-            When I view the course info that has an entrance exam
-            Then there should be an "Entrance Exam" section.'
+            Given that I am on the courseware page
+            When I view the courseware that has an entrance exam
+            Then there should be an "Entrance Exam" chapter.'
         """
-
-        # visit course info page and make sure there is not entrance exam section.
-        self.course_info_page.visit()
-        self.course_info_page.wait_for_page()
+        entrance_exam_link_selector = 'div#accordion nav div h3 a'
+        # visit courseware page and make sure there is not entrance exam chapter.
+        self.courseware_page.visit()
+        self.courseware_page.wait_for_page()
         self.assertFalse(element_has_text(
-            page=self.course_info_page,
-            css_selector='div ol li a',
+            page=self.courseware_page,
+            css_selector=entrance_exam_link_selector,
             text='Entrance Exam'
         ))
 
@@ -994,7 +1021,7 @@ class EntranceExamTest(UniqueCourseTest):
         self.settings_page.visit()
         self.settings_page.wait_for_page()
         self.assertTrue(self.settings_page.is_browser_on_page())
-        self.settings_page.entrance_exam_field[0].click()
+        self.settings_page.entrance_exam_field.click()
         self.settings_page.save_changes()
 
         # Logout and login as a student.
@@ -1002,10 +1029,10 @@ class EntranceExamTest(UniqueCourseTest):
         AutoAuthPage(self.browser, course_id=self.course_id, staff=False).visit()
 
         # visit course info page and make sure there is an "Entrance Exam" section.
-        self.course_info_page.visit()
-        self.course_info_page.wait_for_page()
+        self.courseware_page.visit()
+        self.courseware_page.wait_for_page()
         self.assertTrue(element_has_text(
-            page=self.course_info_page,
-            css_selector='div ol li a',
+            page=self.courseware_page,
+            css_selector=entrance_exam_link_selector,
             text='Entrance Exam'
         ))

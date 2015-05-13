@@ -12,6 +12,7 @@ from student import auth
 from student.models import CourseEnrollment, CourseAccessRole
 from student.roles import CourseInstructorRole
 from student.views import AccountValidationError
+from student.forms import AccountCreationForm
 from student.tests.factories import AdminFactory
 from courseware.models import StudentModule
 from contentstore.utils import delete_course_and_groups
@@ -30,8 +31,7 @@ log = logging.getLogger(__name__)
 
 # Create your views here.
 def get_key_from_course_id(course_id):
-	org, course, run = course_id.split('/')
-	return SlashSeparatedCourseKey(org, course, run)
+    return CourseKey.from_string(course_id)
 
 """
 Enroll user in course. 
@@ -156,7 +156,11 @@ def cm_create_new_user(request):
             if validate_token(request.body, request) == False:
                 return HttpResponse('Unauthorized', status=401)
             try:
-                ret = _do_create_account(request.json)
+                form = AccountCreationForm(
+                        data=request.json,
+                        tos_required=False
+                    )
+                ret = _do_create_account(form)
 		if isinstance(ret, HttpResponse):
                     response_body = json.loads(ret.content)
                     content = {'errors':response_body['value']}
@@ -174,6 +178,7 @@ def cm_create_new_user(request):
             except:
                     content = {'errors':'Bad Request'}
                     status_code = 400
+
             return HttpResponse(content = json.dumps(content), \
                     content_type = 'application/json', \
                     status = status_code)

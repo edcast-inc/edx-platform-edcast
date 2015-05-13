@@ -4,13 +4,14 @@ import copy
 import mock
 from mock import patch
 import shutil
-import lxml
-
+import lxml.html
+import ddt
+import hashlib
+import json
 from datetime import timedelta
 from fs.osfs import OSFS
 from json import loads
 from path import path
-from tempdir import mkdtemp_clean
 from textwrap import dedent
 from uuid import uuid4
 from functools import wraps
@@ -21,22 +22,24 @@ from django.contrib.auth.models import User
 from django.test import TestCase
 from django.test.utils import override_settings
 
+from openedx.core.lib.tempdir import mkdtemp_clean
 from contentstore.tests.utils import parse_json, AjaxEnabledTestClient, CourseTestCase
 from contentstore.views.component import ADVANCED_COMPONENT_TYPES
 
+from edxval.api import create_video, get_videos_for_course
+
 from xmodule.contentstore.django import contentstore
 from xmodule.contentstore.utils import restore_asset_from_trashcan, empty_asset_trashcan
-from xmodule.exceptions import NotFoundError, InvalidVersionError
+from xmodule.exceptions import InvalidVersionError
 from xmodule.modulestore import ModuleStoreEnum
 from xmodule.modulestore.exceptions import ItemNotFoundError
 from xmodule.modulestore.inheritance import own_metadata
 from opaque_keys.edx.keys import UsageKey, CourseKey
-from opaque_keys.edx.locations import SlashSeparatedCourseKey, AssetLocation, CourseLocator, Location
+from opaque_keys.edx.locations import AssetLocation, CourseLocator
 from xmodule.modulestore.tests.factories import CourseFactory, ItemFactory, check_mongo_calls
-from xmodule.modulestore.xml_exporter import export_to_xml
-from xmodule.modulestore.xml_importer import import_from_xml, perform_xlint
+from xmodule.modulestore.xml_exporter import export_course_to_xml
+from xmodule.modulestore.xml_importer import import_course_from_xml, perform_xlint
 from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
-from xmodule.modulestore.django import modulestore
 
 from xmodule.capa_module import CapaDescriptor
 from xmodule.course_module import CourseDescriptor, Textbook
@@ -54,9 +57,9 @@ from course_action_state.models import CourseRerunState, CourseRerunUIStateManag
 
 from course_action_state.managers import CourseActionStateItemNotFoundError
 from xmodule.contentstore.content import StaticContent
-from courseware.courses import get_course
+from xmodule.modulestore.django import modulestore
+import yaml
 from courseware.access import has_access
-from cm_plugin.views import get_key_from_course_id
 
 TEST_DATA_CONTENTSTORE = copy.deepcopy(settings.CONTENTSTORE)
 TEST_DATA_CONTENTSTORE['DOC_STORE_CONFIG']['db'] = 'test_xcontent_%s' % uuid4().hex
@@ -96,7 +99,9 @@ class ImportRequiredTestCases(ContentStoreTestCase):
     Tests which legitimately need to import a course
     """
     def test_no_static_link_rewrites_on_import(self):
-        course_items = import_from_xml(self.store, self.user.id, TEST_DATA_DIR, ['toy'])
+        course_items = import_course_from_xml(
+            self.store, self.user.id, TEST_DATA_DIR, ['toy'], create_if_not_present=True
+        )
         course = course_items[0]
 
         handouts_usage_key = course.id.make_usage_key('course_info', 'handouts')
@@ -117,7 +122,9 @@ class ImportRequiredTestCases(ContentStoreTestCase):
         e.g. /about/Fall_2012/effort.html
         while there is a base definition in /about/effort.html
         '''
-        course_items = import_from_xml(self.store, self.user.id, TEST_DATA_DIR, ['toy'])
+        course_items = import_course_from_xml(
+            self.store, self.user.id, TEST_DATA_DIR, ['toy'], create_if_not_present=True
+        )
         course_key = course_items[0].id
         effort = self.store.get_item(course_key.make_usage_key('about', 'effort'))
         self.assertEqual(effort.data, '6 hours')
@@ -133,9 +140,12 @@ class ImportRequiredTestCases(ContentStoreTestCase):
         '''
         content_store = contentstore()
 
-        import_from_xml(self.store, self.user.id, TEST_DATA_DIR, ['toy'], static_content_store=content_store, verbose=True)
+        import_course_from_xml(
+            self.store, self.user.id, TEST_DATA_DIR, ['toy'], static_content_store=content_store, verbose=True,
+            create_if_not_present=True
+        )
 
-        course = self.store.get_course(SlashSeparatedCourseKey('edX', 'toy', '2012_Fall'))
+        course = self.store.get_course(self.store.make_course_key('edX', 'toy', '2012_Fall'))
 
         self.assertIsNotNone(course)
 
@@ -161,9 +171,9 @@ class ImportRequiredTestCases(ContentStoreTestCase):
         """
         content_store = contentstore()
         data_dir = TEST_DATA_DIR
-        courses = import_from_xml(
+        courses = import_course_from_xml(
             self.store, self.user.id, data_dir, ['course_info_updates'],
-            static_content_store=content_store, verbose=True,
+            static_content_store=content_store, verbose=True, create_if_not_present=True
         )
 
         course = courses[0]
@@ -192,7 +202,7 @@ class ImportRequiredTestCases(ContentStoreTestCase):
         # with same content as in course 'info' directory
         root_dir = path(mkdtemp_clean())
         print 'Exporting to tempdir = {0}'.format(root_dir)
-        export_to_xml(self.store, content_store, course.id, root_dir, 'test_export')
+        export_course_to_xml(self.store, content_store, course.id, root_dir, 'test_export')
 
         # check that exported course has files 'updates.html' and 'updates.items.json'
         filesystem = OSFS(root_dir / 'test_export/info')
@@ -211,10 +221,13 @@ class ImportRequiredTestCases(ContentStoreTestCase):
     def test_rewrite_nonportable_links_on_import(self):
         content_store = contentstore()
 
-        import_from_xml(self.store, self.user.id, TEST_DATA_DIR, ['toy'], static_content_store=content_store)
+        import_course_from_xml(
+            self.store, self.user.id, TEST_DATA_DIR, ['toy'],
+            static_content_store=content_store, create_if_not_present=True
+        )
 
         # first check a static asset link
-        course_key = SlashSeparatedCourseKey('edX', 'toy', 'run')
+        course_key = self.store.make_course_key('edX', 'toy', 'run')
         html_module_location = course_key.make_usage_key('html', 'nonportable')
         html_module = self.store.get_item(html_module_location)
         self.assertIn('/static/foo.jpg', html_module.data)
@@ -249,7 +262,7 @@ class ImportRequiredTestCases(ContentStoreTestCase):
         print 'Exporting to tempdir = {0}'.format(root_dir)
 
         # export out to a tempdir
-        export_to_xml(self.store, content_store, course_id, root_dir, 'test_export')
+        export_course_to_xml(self.store, content_store, course_id, root_dir, 'test_export')
 
         # check for static tabs
         self.verify_content_existence(self.store, root_dir, course_id, 'tabs', 'static_tab', '.html')
@@ -293,7 +306,7 @@ class ImportRequiredTestCases(ContentStoreTestCase):
         self.check_import(root_dir, content_store, course_id)
 
         # import to different course id
-        new_course_id = SlashSeparatedCourseKey('anotherX', 'anotherToy', 'Someday')
+        new_course_id = self.store.make_course_key('anotherX', 'anotherToy', 'Someday')
         self.check_import(root_dir, content_store, new_course_id)
         self.assertCoursesEqual(course_id, new_course_id)
 
@@ -302,13 +315,13 @@ class ImportRequiredTestCases(ContentStoreTestCase):
     def check_import(self, root_dir, content_store, course_id):
         """Imports the course in root_dir into the given course_id and verifies its content"""
         # reimport
-        import_from_xml(
+        import_course_from_xml(
             self.store,
             self.user.id,
             root_dir,
             ['test_export'],
             static_content_store=content_store,
-            target_course_id=course_id,
+            target_id=course_id,
         )
 
         # verify content of the course
@@ -332,8 +345,8 @@ class ImportRequiredTestCases(ContentStoreTestCase):
     def test_export_course_with_metadata_only_video(self):
         content_store = contentstore()
 
-        import_from_xml(self.store, self.user.id, TEST_DATA_DIR, ['toy'])
-        course_id = SlashSeparatedCourseKey('edX', 'toy', '2012_Fall')
+        import_course_from_xml(self.store, self.user.id, TEST_DATA_DIR, ['toy'], create_if_not_present=True)
+        course_id = self.store.make_course_key('edX', 'toy', '2012_Fall')
 
         # create a new video module and add it as a child to a vertical
         # this re-creates a bug whereby since the video template doesn't have
@@ -351,7 +364,7 @@ class ImportRequiredTestCases(ContentStoreTestCase):
         print 'Exporting to tempdir = {0}'.format(root_dir)
 
         # export out to a tempdir
-        export_to_xml(self.store, content_store, course_id, root_dir, 'test_export')
+        export_course_to_xml(self.store, content_store, course_id, root_dir, 'test_export')
 
         shutil.rmtree(root_dir)
 
@@ -361,8 +374,8 @@ class ImportRequiredTestCases(ContentStoreTestCase):
         """
         content_store = contentstore()
 
-        import_from_xml(self.store, self.user.id, TEST_DATA_DIR, ['word_cloud'])
-        course_id = SlashSeparatedCourseKey('HarvardX', 'ER22x', '2013_Spring')
+        import_course_from_xml(self.store, self.user.id, TEST_DATA_DIR, ['word_cloud'], create_if_not_present=True)
+        course_id = self.store.make_course_key('HarvardX', 'ER22x', '2013_Spring')
 
         verticals = self.store.get_items(course_id, qualifiers={'category': 'vertical'})
 
@@ -377,9 +390,35 @@ class ImportRequiredTestCases(ContentStoreTestCase):
         print 'Exporting to tempdir = {0}'.format(root_dir)
 
         # export out to a tempdir
-        export_to_xml(self.store, content_store, course_id, root_dir, 'test_export')
+        export_course_to_xml(self.store, content_store, course_id, root_dir, 'test_export')
 
         shutil.rmtree(root_dir)
+
+    def test_import_after_renaming_xml_data(self):
+        """
+        Test that import works fine on split mongo after renaming the blocks url.
+        """
+        split_store = modulestore()._get_modulestore_by_type(ModuleStoreEnum.Type.split)  # pylint: disable=W0212
+        import_course_from_xml(
+            split_store, self.user.id, TEST_DATA_DIR,
+            ['course_before_rename'],
+            create_if_not_present=True
+        )
+        course_after_rename = import_course_from_xml(
+            split_store, self.user.id, TEST_DATA_DIR,
+            ['course_after_rename'],
+            create_if_not_present=True
+        )
+        all_items = split_store.get_items(course_after_rename[0].id, qualifiers={'category': 'chapter'})
+        renamed_chapter = [item for item in all_items if item.location.block_id == 'renamed_chapter'][0]
+        self.assertIsNotNone(renamed_chapter.published_on)
+        self.assertIsNotNone(renamed_chapter.parent)
+        self.assertTrue(renamed_chapter.location in course_after_rename[0].children)
+        original_chapter = [item for item in all_items
+                            if item.location.block_id == 'b9870b9af59841a49e6e02765d0e3bbf'][0]
+        self.assertIsNone(original_chapter.published_on)
+        self.assertIsNone(original_chapter.parent)
+        self.assertFalse(original_chapter.location in course_after_rename[0].children)
 
     def test_empty_data_roundtrip(self):
         """
@@ -388,8 +427,8 @@ class ImportRequiredTestCases(ContentStoreTestCase):
         """
         content_store = contentstore()
 
-        import_from_xml(self.store, self.user.id, TEST_DATA_DIR, ['toy'])
-        course_id = SlashSeparatedCourseKey('edX', 'toy', '2012_Fall')
+        import_course_from_xml(self.store, self.user.id, TEST_DATA_DIR, ['toy'], create_if_not_present=True)
+        course_id = self.store.make_course_key('edX', 'toy', '2012_Fall')
 
         verticals = self.store.get_items(course_id, qualifiers={'category': 'vertical'})
 
@@ -404,10 +443,10 @@ class ImportRequiredTestCases(ContentStoreTestCase):
 
         # Export the course
         root_dir = path(mkdtemp_clean())
-        export_to_xml(self.store, content_store, course_id, root_dir, 'test_roundtrip')
+        export_course_to_xml(self.store, content_store, course_id, root_dir, 'test_roundtrip')
 
         # Reimport and get the video back
-        import_from_xml(self.store, self.user.id, root_dir)
+        import_course_from_xml(self.store, self.user.id, root_dir)
         imported_word_cloud = self.store.get_item(course_id.make_usage_key('word_cloud', 'untitled'))
 
         # It should now contain empty data
@@ -419,16 +458,16 @@ class ImportRequiredTestCases(ContentStoreTestCase):
         """
         content_store = contentstore()
 
-        import_from_xml(self.store, self.user.id, TEST_DATA_DIR, ['toy'])
+        import_course_from_xml(self.store, self.user.id, TEST_DATA_DIR, ['toy'], create_if_not_present=True)
 
-        course_id = SlashSeparatedCourseKey('edX', 'toy', '2012_Fall')
+        course_id = self.store.make_course_key('edX', 'toy', '2012_Fall')
 
         # Export the course
         root_dir = path(mkdtemp_clean())
-        export_to_xml(self.store, content_store, course_id, root_dir, 'test_roundtrip')
+        export_course_to_xml(self.store, content_store, course_id, root_dir, 'test_roundtrip')
 
         # Reimport and get the video back
-        import_from_xml(self.store, self.user.id, root_dir)
+        import_course_from_xml(self.store, self.user.id, root_dir, create_if_not_present=True)
 
         # get the sample HTML with styling information
         html_module = self.store.get_item(course_id.make_usage_key('html', 'with_styling'))
@@ -441,22 +480,24 @@ class ImportRequiredTestCases(ContentStoreTestCase):
     def test_export_course_without_content_store(self):
         # Create toy course
 
-        course_items = import_from_xml(self.store, self.user.id, TEST_DATA_DIR, ['toy'])
+        course_items = import_course_from_xml(
+            self.store, self.user.id, TEST_DATA_DIR, ['toy'], create_if_not_present=True
+        )
         course_id = course_items[0].id
 
         root_dir = path(mkdtemp_clean())
 
         print 'Exporting to tempdir = {0}'.format(root_dir)
-        export_to_xml(self.store, None, course_id, root_dir, 'test_export_no_content_store')
+        export_course_to_xml(self.store, None, course_id, root_dir, 'test_export_no_content_store')
 
         # Delete the course from module store and reimport it
 
         self.store.delete_course(course_id, self.user.id)
 
-        import_from_xml(
+        import_course_from_xml(
             self.store, self.user.id, root_dir, ['test_export_no_content_store'],
             static_content_store=None,
-            target_course_id=course_id
+            target_id=course_id
         )
 
         # Verify reimported course
@@ -476,8 +517,8 @@ class ImportRequiredTestCases(ContentStoreTestCase):
         exported successfully
         """
         content_store = contentstore()
-        import_from_xml(self.store, self.user.id, TEST_DATA_DIR, ['toy'])
-        course_id = SlashSeparatedCourseKey('edX', 'toy', '2012_Fall')
+        import_course_from_xml(self.store, self.user.id, TEST_DATA_DIR, ['toy'], create_if_not_present=True)
+        course_id = self.store.make_course_key('edX', 'toy', '2012_Fall')
         verticals = self.store.get_items(course_id, qualifiers={'category': 'vertical'})
         vertical = verticals[0]
 
@@ -497,7 +538,7 @@ class ImportRequiredTestCases(ContentStoreTestCase):
 
         # export should still complete successfully
         root_dir = path(mkdtemp_clean())
-        export_to_xml(
+        export_course_to_xml(
             self.store,
             content_store,
             course_id,
@@ -549,7 +590,6 @@ class MiscCourseTests(ContentStoreTestCase):
             self.user.id, self.vert_loc, 'poll_question', fields={
                 "name": "T1_changemind_poll_foo_2",
                 "display_name": "Change your answer",
-                "reset": False,
                 "question": "Have you changed your mind?",
                 "answers": [{"id": "yes", "text": "Yes"}, {"id": "no", "text": "No"}],
             }
@@ -854,6 +894,12 @@ class MiscCourseTests(ContentStoreTestCase):
         resp = self.client.get_html('/c4x/CDX/123123/asset/invalid.png')
         self.assertEqual(resp.status_code, 404)
 
+        # Now test that 404 response is returned when user tries to access
+        # asset of some invalid course from split ModuleStore
+        with self.store.default_store(ModuleStoreEnum.Type.split):
+            resp = self.client.get_html('/c4x/InvalidOrg/InvalidCourse/asset/invalid.png')
+            self.assertEqual(resp.status_code, 404)
+
     def test_delete_course(self):
         """
         This test creates a course, makes a draft item, and deletes the course. This will also assert that the
@@ -939,17 +985,30 @@ class MiscCourseTests(ContentStoreTestCase):
 class CmCourseCreationTest(ModuleStoreTestCase):
 
     def setUp(self):
+        data= yaml.compose("""
+            :app_id: 2
+            :lms_id: 1
+            :callback_url: https://www.cmappstage.com
+            :credentials: !ruby/array:Chef::Node::ImmutableArray
+            - !ruby/hash:Chef::Node::ImmutableMash
+              api_key: testapi
+              shared_secret: 123456789
+            :aws_access_key_id: abcdef
+            :aws_secret_access_key: testaws
+            :environment: development
+            """)
+        with open('/edx/app/edxapp/test_meta_data.yml', 'w') as outfile:
+            yaml.serialize(data,stream=outfile)
+        self.outfile = outfile
+        self.shared_secret = '123456789'
         self.client = AjaxEnabledTestClient()
-        self.cm_secret_token = 'cm_secret_token'
         self.course_creation_options = {'org':'Stanford', \
                 'number':'cs224n', \
                 'run':'fall2015', \
                 'display_name':'Natural Language Processing', \
                 'email':'user@email.com', \
-                'cm_secret_token':self.cm_secret_token, \
                 'format':'json'}
         self.additional_options = {
-            'cm_secret_token':self.cm_secret_token,
             'email':'user@email.com',
             'start_date' : '2013-01-01 10:00 UTC',
             'end_date':'2013-01-01 11:00 UTC',
@@ -959,13 +1018,11 @@ class CmCourseCreationTest(ModuleStoreTestCase):
             'short_description':'short_description'}
 
         self.start_date_options = {
-            'cm_secret_token':self.cm_secret_token,
             'email':'user@email.com',
             'start_date' : '2013-01-03 10:00 UTC'
             }
 
         self.end_date_options = {
-            'cm_secret_token':self.cm_secret_token,
             'email':'user@email.com',
             'end_date' : '2013-01-15 11:00 UTC'
             }
@@ -974,23 +1031,32 @@ class CmCourseCreationTest(ModuleStoreTestCase):
         self.user.save()
 
     def test_course_creation(self):
-        response = self.client.ajax_post('/cm/course/', self.course_creation_options)
+        body = json.dumps(self.course_creation_options)
+        token = hashlib.sha256(self.shared_secret + "|" + body)
+        response = self.client.ajax_post('/cm/course/', body, HTTP_X_SAVANNAH_TOKEN = token.hexdigest())
 
         self.assertEqual(response.status_code, 200)
         data = parse_json(response)
-        self.assertEqual(data['id'], 'Stanford/cs224n/fall2015')
-        self.assertTrue(has_access(self.user, 'staff', get_course(get_key_from_course_id(data['id']))))
+        store = modulestore()
+        with store.default_store('split'):
+            destination_course_key = store.make_course_key('Stanford', 'cs224n', 'fall2015')
+        self.assertEqual(data['id'], str(destination_course_key))
+        self.assertTrue(has_access(self.user, 'staff', destination_course_key))
 
     def test_course_creation_with_dates(self):
         options = dict(self.course_creation_options.items() 
             + self.additional_options.items())
-        response = self.client.ajax_post('/cm/course/', options)
+        body = json.dumps(options)
+        token = hashlib.sha256(self.shared_secret + "|" + body)
+        response = self.client.ajax_post('/cm/course/', body, HTTP_X_SAVANNAH_TOKEN = token.hexdigest())
 
         self.assertEqual(response.status_code, 200)
         self.assert_course_metadata()
 
     def assert_course_metadata(self):
-        location = SlashSeparatedCourseKey('Stanford', 'cs224n', 'fall2015')
+        store = modulestore()
+        with store.default_store('split'):
+            location = store.make_course_key('Stanford', 'cs224n', 'fall2015')
         course = modulestore().get_course(location)
         self.assertEqual(course.start.strftime('%Y-%m-%d %H:%M %Z'), 
             self.additional_options['start_date'])
@@ -998,24 +1064,39 @@ class CmCourseCreationTest(ModuleStoreTestCase):
             self.additional_options['end_date'])
         
     def test_course_update(self):
-        self.client.ajax_post('/cm/course/', self.course_creation_options)
-        response = self.client.ajax_post('/cm/course/Stanford/cs224n/fall2015',
-            self.additional_options)
+        body = json.dumps(self.course_creation_options)
+        token = hashlib.sha256(self.shared_secret + "|" + body)
+        self.client.ajax_post('/cm/course/',  body, HTTP_X_SAVANNAH_TOKEN = token.hexdigest())
+        store = modulestore()
+        with store.default_store('split'):
+            location = store.make_course_key('Stanford', 'cs224n', 'fall2015')
+        body = json.dumps(self.additional_options)
+        token = hashlib.sha256(self.shared_secret + "|" + body)
+        response = self.client.ajax_post('/cm/course/'+str(location),
+            body, HTTP_X_SAVANNAH_TOKEN = token.hexdigest())
 
         self.assertEqual(response.status_code, 200)
         self.assert_course_metadata()
 
     #Updating the start date should not remove the end date value
     def test_course_start_date_update(self):
-        self.client.ajax_post('/cm/course/', self.course_creation_options)
-        response = self.client.ajax_post('/cm/course/Stanford/cs224n/fall2015',
-            self.additional_options)
+        body = json.dumps(self.course_creation_options)
+        token = hashlib.sha256(self.shared_secret + "|" + body)
+        self.client.ajax_post('/cm/course/', body, HTTP_X_SAVANNAH_TOKEN = token.hexdigest())
+        store = modulestore()
+        with store.default_store('split'):
+            location = store.make_course_key('Stanford', 'cs224n', 'fall2015')
+        body = json.dumps(self.additional_options)
+        token = hashlib.sha256(self.shared_secret + "|" + body)
+        response = self.client.ajax_post('/cm/course/'+str(location),
+            body, HTTP_X_SAVANNAH_TOKEN = token.hexdigest())
         self.assertEqual(response.status_code, 200)
         self.assert_course_metadata()
-        response = self.client.ajax_post('/cm/course/Stanford/cs224n/fall2015',
-            self.start_date_options)
+        body = json.dumps(self.start_date_options)
+        token = hashlib.sha256(self.shared_secret + "|" + body)
+        response = self.client.ajax_post('/cm/course/'+str(location),
+            body, HTTP_X_SAVANNAH_TOKEN = token.hexdigest())
         self.assertEqual(response.status_code, 200)
-        location = SlashSeparatedCourseKey('Stanford', 'cs224n', 'fall2015')
         course = modulestore().get_course(location)
         self.assertEqual(course.start.strftime('%Y-%m-%d %H:%M %Z'),
             self.start_date_options['start_date'])
@@ -1024,15 +1105,23 @@ class CmCourseCreationTest(ModuleStoreTestCase):
 
     #Updating the end date should not remove the start date value
     def test_course_end_date_update(self):
-        self.client.ajax_post('/cm/course/', self.course_creation_options)
-        response = self.client.ajax_post('/cm/course/Stanford/cs224n/fall2015',
-            self.additional_options)
+        body = json.dumps(self.course_creation_options)
+        token = hashlib.sha256(self.shared_secret + "|" + body)
+        self.client.ajax_post('/cm/course/',body, HTTP_X_SAVANNAH_TOKEN = token.hexdigest())
+        store = modulestore()
+        with store.default_store('split'):
+            location = store.make_course_key('Stanford', 'cs224n', 'fall2015')
+        body = json.dumps(self.additional_options)
+        token = hashlib.sha256(self.shared_secret + "|" + body)
+        response = self.client.ajax_post('/cm/course/'+str(location),
+            body, HTTP_X_SAVANNAH_TOKEN = token.hexdigest())
         self.assertEqual(response.status_code, 200)
         self.assert_course_metadata()
-        response = self.client.ajax_post('/cm/course/Stanford/cs224n/fall2015',
-            self.end_date_options)
+        body = json.dumps(self.end_date_options)
+        token = hashlib.sha256(self.shared_secret + "|" + body)
+        response = self.client.ajax_post('/cm/course/'+str(location),
+            body, HTTP_X_SAVANNAH_TOKEN = token.hexdigest())
         self.assertEqual(response.status_code, 200)
-        location = SlashSeparatedCourseKey('Stanford', 'cs224n', 'fall2015')
         course = modulestore().get_course(location)
         self.assertEqual(course.start.strftime('%Y-%m-%d %H:%M %Z'),
             self.additional_options['start_date'])
@@ -1041,23 +1130,35 @@ class CmCourseCreationTest(ModuleStoreTestCase):
 
 
     def test_course_update_bad_id(self):
-        response = self.client.ajax_post('/cm/course/Stanford/cs224n/fall2015',
-            self.additional_options)
+        body = json.dumps(self.additional_options)
+        token = hashlib.sha256(self.shared_secret + "|" + body)
+        store = modulestore()
+        with store.default_store('split'):
+            location = store.make_course_key('Harvard', 'cs224n', 'fall2015')
+        response = self.client.ajax_post('/cm/course/'+str(location),
+            body, HTTP_X_SAVANNAH_TOKEN = token.hexdigest())
         self.assertEqual(response.status_code, 400)
 
     def test_duplicate_course_error(self):
-        self.client.ajax_post('/cm/course/', self.course_creation_options)
-        response = self.client.ajax_post('/cm/course/', self.course_creation_options)
-
+        body = json.dumps(self.course_creation_options)
+        token = hashlib.sha256(self.shared_secret + "|" + body)
+        self.client.ajax_post('/cm/course/', body, HTTP_X_SAVANNAH_TOKEN = token.hexdigest())
+        response = self.client.ajax_post('/cm/course/', body, HTTP_X_SAVANNAH_TOKEN = token.hexdigest())
+        store = modulestore()
+        with store.default_store('split'):
+            location = store.make_course_key('Stanford', 'cs224n', 'fall2015')
         self.assertEqual(response.status_code, 200)
         data = parse_json(response)
         self.assertIn('id', data)
-        self.assertEqual(data['id'], 'Stanford/cs224n/fall2015')
+        # self.assertEqual(data['id'], 'Stanford/cs224n/fall2015')
+        self.assertEqual(data['id'], str(location))
 
     def test_bad_params_course_error(self):
-        response = self.client.ajax_post('/cm/course/', \
-            {'cm_secret_token': self.cm_secret_token, \
+        body = json.dumps({ \
             'org':'Stanford', 'run':'fall2015', 'email':'user@email.com'})
+        token = hashlib.sha256(self.shared_secret + "|" + body)
+        response = self.client.ajax_post('/cm/course/', \
+            body,HTTP_X_SAVANNAH_TOKEN = token.hexdigest())
 
         data = parse_json(response)
         self.assertEqual(response.status_code, 400)
@@ -1065,19 +1166,23 @@ class CmCourseCreationTest(ModuleStoreTestCase):
         self.assertIn('Bad Request', data['errors'])
 
     def test_cm_secret_token_not_present(self):
-        response = self.client.ajax_post('/cm/course/', \
-            {'display_name':'stanfordcs224nfall2015', 'number':'cs224n', \
+        body = json.dumps({'display_name':'stanfordcs224nfall2015', 'number':'cs224n', \
             'org':'Stanford', 'run':'fall2015', 'email':'user@email.com'})
+        response = self.client.ajax_post('/cm/course/', \
+            body)
 
         self.assertEqual(response.status_code, 403)
 
     def test_bad_user_email(self):
         self.course_creation_options['email'] = 'bademail@baddomain.com'
-        response = self.client.ajax_post('/cm/course/', 
-            self.course_creation_options)
+        body = json.dumps(self.course_creation_options)
+        token = hashlib.sha256(self.shared_secret + "|" + body)
+        response = self.client.ajax_post('/cm/course/',
+            body, HTTP_X_SAVANNAH_TOKEN = token.hexdigest())
         self.assertEqual(response.status_code, 400)
             
 
+@ddt.ddt
 class ContentStoreTest(ContentStoreTestCase):
     """
     Tests for the CMS ContentStore application.
@@ -1100,7 +1205,7 @@ class ContentStoreTest(ContentStoreTestCase):
         test_course_data.update(self.course_data)
         if number_suffix:
             test_course_data['number'] = '{0}_{1}'.format(test_course_data['number'], number_suffix)
-        course_key = _get_course_id(test_course_data)
+        course_key = _get_course_id(self.store, test_course_data)
         _create_course(self, course_key, test_course_data)
         # Verify that the creator is now registered in the course.
         self.assertTrue(CourseEnrollment.is_enrolled(self.user, course_key))
@@ -1129,12 +1234,12 @@ class ContentStoreTest(ContentStoreTestCase):
     def test_create_course_check_forum_seeding(self):
         """Test new course creation and verify forum seeding """
         test_course_data = self.assert_created_course(number_suffix=uuid4().hex)
-        self.assertTrue(are_permissions_roles_seeded(_get_course_id(test_course_data)))
+        self.assertTrue(are_permissions_roles_seeded(_get_course_id(self.store, test_course_data)))
 
     def test_forum_unseeding_on_delete(self):
         """Test new course creation and verify forum unseeding """
         test_course_data = self.assert_created_course(number_suffix=uuid4().hex)
-        course_id = _get_course_id(test_course_data)
+        course_id = _get_course_id(self.store, test_course_data)
         self.assertTrue(are_permissions_roles_seeded(course_id))
         delete_course_and_groups(course_id, self.user.id)
         # should raise an exception for checking permissions on deleted course
@@ -1147,13 +1252,13 @@ class ContentStoreTest(ContentStoreTestCase):
         second_course_data = self.assert_created_course(number_suffix=uuid4().hex)
 
         # unseed the forums for the first course
-        course_id = _get_course_id(test_course_data)
+        course_id = _get_course_id(self.store, test_course_data)
         delete_course_and_groups(course_id, self.user.id)
         # should raise an exception for checking permissions on deleted course
         with self.assertRaises(ItemNotFoundError):
             are_permissions_roles_seeded(course_id)
 
-        second_course_id = _get_course_id(second_course_data)
+        second_course_id = _get_course_id(self.store, second_course_data)
         # permissions should still be there for the other course
         self.assertTrue(are_permissions_roles_seeded(second_course_id))
 
@@ -1162,7 +1267,7 @@ class ContentStoreTest(ContentStoreTestCase):
         Test that course deletion doesn't remove course enrollments or user's roles
         """
         test_course_data = self.assert_created_course(number_suffix=uuid4().hex)
-        course_id = _get_course_id(test_course_data)
+        course_id = _get_course_id(self.store, test_course_data)
 
         # test that a user gets his enrollment and its 'student' role as default on creating a course
         self.assertTrue(CourseEnrollment.is_enrolled(self.user, course_id))
@@ -1180,7 +1285,7 @@ class ContentStoreTest(ContentStoreTestCase):
         of all format e.g, 'instructor_edX/Course/Run', 'instructor_edX.Course.Run', 'instructor_Course'
         """
         test_course_data = self.assert_created_course(number_suffix=uuid4().hex)
-        course_id = _get_course_id(test_course_data)
+        course_id = _get_course_id(self.store, test_course_data)
 
         # Add user in possible groups and check that user in instructor groups of this course
         instructor_role = CourseInstructorRole(course_id)
@@ -1209,7 +1314,7 @@ class ContentStoreTest(ContentStoreTestCase):
         """
         test_enrollment = False
         try:
-            course_id = _get_course_id(self.course_data)
+            course_id = _get_course_id(self.store, self.course_data)
             initially_enrolled = CourseEnrollment.is_enrolled(self.user, course_id)
             test_enrollment = True
         except InvalidKeyError:
@@ -1413,7 +1518,9 @@ class ContentStoreTest(ContentStoreTestCase):
             )
             self.assertEqual(resp.status_code, 200)
 
-        course_items = import_from_xml(self.store, self.user.id, TEST_DATA_DIR, ['simple'])
+        course_items = import_course_from_xml(
+            self.store, self.user.id, TEST_DATA_DIR, ['simple'], create_if_not_present=True
+        )
         course_key = course_items[0].id
 
         resp = self._show_course_overview(course_key)
@@ -1457,12 +1564,12 @@ class ContentStoreTest(ContentStoreTestCase):
         delete_item(category='chapter', name='chapter_2')
 
     def test_import_into_new_course_id(self):
-        target_course_id = _get_course_id(self.course_data)
-        _create_course(self, target_course_id, self.course_data)
+        target_id = _get_course_id(self.store, self.course_data)
+        _create_course(self, target_id, self.course_data)
 
-        import_from_xml(self.store, self.user.id, TEST_DATA_DIR, ['toy'], target_course_id=target_course_id)
+        import_course_from_xml(self.store, self.user.id, TEST_DATA_DIR, ['toy'], target_id=target_id)
 
-        modules = self.store.get_items(target_course_id)
+        modules = self.store.get_items(target_id)
 
         # we should have a number of modules in there
         # we can't specify an exact number since it'll always be changing
@@ -1473,7 +1580,7 @@ class ContentStoreTest(ContentStoreTestCase):
         #
 
         # first check PDF textbooks, to make sure the url paths got updated
-        course_module = self.store.get_course(target_course_id)
+        course_module = self.store.get_course(target_id)
 
         self.assertEqual(len(course_module.pdf_textbooks), 1)
         self.assertEqual(len(course_module.pdf_textbooks[0]["chapters"]), 2)
@@ -1482,48 +1589,48 @@ class ContentStoreTest(ContentStoreTestCase):
 
     def test_import_into_new_course_id_wiki_slug_renamespacing(self):
         # If reimporting into the same course do not change the wiki_slug.
-        target_course_id = SlashSeparatedCourseKey('edX', 'toy', '2012_Fall')
+        target_id = self.store.make_course_key('edX', 'toy', '2012_Fall')
         course_data = {
-            'org': target_course_id.org,
-            'number': target_course_id.course,
+            'org': target_id.org,
+            'number': target_id.course,
             'display_name': 'Robot Super Course',
-            'run': target_course_id.run
+            'run': target_id.run
         }
-        _create_course(self, target_course_id, course_data)
-        course_module = self.store.get_course(target_course_id)
+        _create_course(self, target_id, course_data)
+        course_module = self.store.get_course(target_id)
         course_module.wiki_slug = 'toy'
         course_module.save()
 
         # Import a course with wiki_slug == location.course
-        import_from_xml(self.store, self.user.id, TEST_DATA_DIR, ['toy'], target_course_id=target_course_id)
-        course_module = self.store.get_course(target_course_id)
+        import_course_from_xml(self.store, self.user.id, TEST_DATA_DIR, ['toy'], target_id=target_id)
+        course_module = self.store.get_course(target_id)
         self.assertEquals(course_module.wiki_slug, 'toy')
 
         # But change the wiki_slug if it is a different course.
-        target_course_id = SlashSeparatedCourseKey('MITx', '111', '2013_Spring')
+        target_id = self.store.make_course_key('MITx', '111', '2013_Spring')
         course_data = {
-            'org': target_course_id.org,
-            'number': target_course_id.course,
+            'org': target_id.org,
+            'number': target_id.course,
             'display_name': 'Robot Super Course',
-            'run': target_course_id.run
+            'run': target_id.run
         }
-        _create_course(self, target_course_id, course_data)
+        _create_course(self, target_id, course_data)
 
         # Import a course with wiki_slug == location.course
-        import_from_xml(self.store, self.user.id, TEST_DATA_DIR, ['toy'], target_course_id=target_course_id)
-        course_module = self.store.get_course(target_course_id)
+        import_course_from_xml(self.store, self.user.id, TEST_DATA_DIR, ['toy'], target_id=target_id)
+        course_module = self.store.get_course(target_id)
         self.assertEquals(course_module.wiki_slug, 'MITx.111.2013_Spring')
 
         # Now try importing a course with wiki_slug == '{0}.{1}.{2}'.format(location.org, location.course, location.run)
-        import_from_xml(self.store, self.user.id, TEST_DATA_DIR, ['two_toys'], target_course_id=target_course_id)
-        course_module = self.store.get_course(target_course_id)
+        import_course_from_xml(self.store, self.user.id, TEST_DATA_DIR, ['two_toys'], target_id=target_id)
+        course_module = self.store.get_course(target_id)
         self.assertEquals(course_module.wiki_slug, 'MITx.111.2013_Spring')
 
     def test_import_metadata_with_attempts_empty_string(self):
-        import_from_xml(self.store, self.user.id, TEST_DATA_DIR, ['simple'])
+        import_course_from_xml(self.store, self.user.id, TEST_DATA_DIR, ['simple'], create_if_not_present=True)
         did_load_item = False
         try:
-            course_key = SlashSeparatedCourseKey('edX', 'simple', 'problem')
+            course_key = self.store.make_course_key('edX', 'simple', 'problem')
             usage_key = course_key.make_usage_key('problem', 'ps01-simple')
             self.store.get_item(usage_key)
             did_load_item = True
@@ -1533,16 +1640,34 @@ class ContentStoreTest(ContentStoreTestCase):
         # make sure we found the item (e.g. it didn't error while loading)
         self.assertTrue(did_load_item)
 
-    def test_forum_id_generation(self):
-        course = CourseFactory.create()
+    @ddt.data(ModuleStoreEnum.Type.split, ModuleStoreEnum.Type.mongo)
+    def test_forum_id_generation(self, default_store):
+        """
+        Test that a discussion item, even if it doesn't set its discussion_id,
+        consistently generates the same one
+        """
+        course = CourseFactory.create(default_store=default_store)
 
-        # crate a new module and add it as a child to a vertical
-        new_discussion_item = self.store.create_item(self.user.id, course.id, 'discussion', 'new_component')
+        # create a discussion item
+        discussion_item = self.store.create_item(self.user.id, course.id, 'discussion', 'new_component')
 
-        self.assertNotEquals(new_discussion_item.discussion_id, '$$GUID$$')
+        # now fetch it from the modulestore to instantiate its descriptor
+        fetched = self.store.get_item(discussion_item.location)
+
+        # refetch it to be safe
+        refetched = self.store.get_item(discussion_item.location)
+
+        # and make sure the same discussion items have the same discussion ids
+        self.assertEqual(fetched.discussion_id, discussion_item.discussion_id)
+        self.assertEqual(fetched.discussion_id, refetched.discussion_id)
+
+        # and make sure that the id isn't the old "$$GUID$$"
+        self.assertNotEqual(discussion_item.discussion_id, '$$GUID$$')
 
     def test_metadata_inheritance(self):
-        course_items = import_from_xml(self.store, self.user.id, TEST_DATA_DIR, ['toy'])
+        course_items = import_course_from_xml(
+            self.store, self.user.id, TEST_DATA_DIR, ['toy'], create_if_not_present=True
+        )
 
         course = course_items[0]
         verticals = self.store.get_items(course.id, qualifiers={'category': 'vertical'})
@@ -1608,12 +1733,13 @@ class ContentStoreTest(ContentStoreTestCase):
         content_store = contentstore()
 
         # Use conditional_and_poll, as it's got an image already
-        courses = import_from_xml(
+        courses = import_course_from_xml(
             self.store,
             self.user.id,
             TEST_DATA_DIR,
             ['conditional_and_poll'],
-            static_content_store=content_store
+            static_content_store=content_store,
+            create_if_not_present=True
         )
 
         course = courses[0]
@@ -1635,7 +1761,7 @@ class ContentStoreTest(ContentStoreTestCase):
     def test_wiki_slug(self):
         """When creating a course a unique wiki_slug should be set."""
 
-        course_key = _get_course_id(self.course_data)
+        course_key = _get_course_id(self.store, self.course_data)
         _create_course(self, course_key, self.course_data)
         course_module = self.store.get_course(course_key)
         self.assertEquals(course_module.wiki_slug, 'MITx.111.2013_Spring')
@@ -1729,7 +1855,7 @@ class RerunCourseTest(ContentStoreTestCase):
         if not destination_course_data:
             destination_course_data = self.destination_course_data
         rerun_course_data.update(destination_course_data)
-        destination_course_key = _get_course_id(destination_course_data)
+        destination_course_key = _get_course_id(self.store, destination_course_data)
 
         # post the request
         course_url = get_url('course_handler', destination_course_key, 'course_key_string')
@@ -1791,10 +1917,36 @@ class RerunCourseTest(ContentStoreTestCase):
         self.assertInCourseListing(source_course_key)
         self.assertInCourseListing(destination_course_key)
 
-    def test_rerun_course_success(self):
+    def test_rerun_course_no_videos_in_val(self):
+        """
+        Test when rerunning a course with no videos, VAL copies nothing
+        """
         source_course = CourseFactory.create()
         destination_course_key = self.post_rerun_request(source_course.id)
         self.verify_rerun_course(source_course.id, destination_course_key, self.destination_course_data['display_name'])
+        videos = list(get_videos_for_course(destination_course_key))
+        self.assertEqual(0, len(videos))
+        self.assertInCourseListing(destination_course_key)
+
+    def test_rerun_course_success(self):
+        source_course = CourseFactory.create()
+        create_video(
+            dict(
+                edx_video_id="tree-hugger",
+                courses=[source_course.id],
+                status='test',
+                duration=2,
+                encoded_videos=[]
+            )
+        )
+        destination_course_key = self.post_rerun_request(source_course.id)
+        self.verify_rerun_course(source_course.id, destination_course_key, self.destination_course_data['display_name'])
+
+        # Verify that the VAL copies videos to the rerun
+        source_videos = list(get_videos_for_course(source_course.id))
+        target_videos = list(get_videos_for_course(destination_course_key))
+        self.assertEqual(1, len(source_videos))
+        self.assertEqual(source_videos, target_videos)
 
     def test_rerun_of_rerun(self):
         source_course = CourseFactory.create()
@@ -1809,24 +1961,23 @@ class RerunCourseTest(ContentStoreTestCase):
         self.verify_rerun_course(rerun_course_key, rerun_of_rerun_course_key, rerun_of_rerun_data['display_name'])
 
     def test_rerun_course_fail_no_source_course(self):
-        with mock.patch.dict('django.conf.settings.FEATURES', {'ALLOW_COURSE_RERUNS': True}):
-            existent_course_key = CourseFactory.create().id
-            non_existent_course_key = CourseLocator("org", "non_existent_course", "non_existent_run")
-            destination_course_key = self.post_rerun_request(non_existent_course_key)
+        existent_course_key = CourseFactory.create().id
+        non_existent_course_key = CourseLocator("org", "non_existent_course", "non_existent_run")
+        destination_course_key = self.post_rerun_request(non_existent_course_key)
 
-            # Verify that the course rerun action is marked failed
-            rerun_state = CourseRerunState.objects.find_first(course_key=destination_course_key)
-            self.assertEquals(rerun_state.state, CourseRerunUIStateManager.State.FAILED)
-            self.assertIn("Cannot find a course at", rerun_state.message)
+        # Verify that the course rerun action is marked failed
+        rerun_state = CourseRerunState.objects.find_first(course_key=destination_course_key)
+        self.assertEquals(rerun_state.state, CourseRerunUIStateManager.State.FAILED)
+        self.assertIn("Cannot find a course at", rerun_state.message)
 
-            # Verify that the creator is not enrolled in the course.
-            self.assertFalse(CourseEnrollment.is_enrolled(self.user, non_existent_course_key))
+        # Verify that the creator is not enrolled in the course.
+        self.assertFalse(CourseEnrollment.is_enrolled(self.user, non_existent_course_key))
 
-            # Verify that the existing course continues to be in the course listings
-            self.assertInCourseListing(existent_course_key)
+        # Verify that the existing course continues to be in the course listings
+        self.assertInCourseListing(existent_course_key)
 
-            # Verify that the failed course is NOT in the course listings
-            self.assertInUnsucceededCourseActions(destination_course_key)
+        # Verify that the failed course is NOT in the course listings
+        self.assertInUnsucceededCourseActions(destination_course_key)
 
     def test_rerun_course_fail_duplicate_course(self):
         existent_course_key = CourseFactory.create().id
@@ -1867,12 +2018,33 @@ class RerunCourseTest(ContentStoreTestCase):
             self.assertEquals(rerun_state.state, CourseRerunUIStateManager.State.FAILED)
             self.assertIn(error_message, rerun_state.message)
 
+    def test_rerun_error_trunc_message(self):
+        """
+        CourseActionUIState.message is sometimes populated with the contents
+        of Python tracebacks. This test ensures we don't crash when attempting
+        to insert a value exceeding its max_length (note that sqlite does not
+        complain if this happens, but MySQL throws an error).
+        """
+        with mock.patch(
+            'xmodule.modulestore.mixed.MixedModuleStore.clone_course',
+            mock.Mock(side_effect=Exception()),
+        ):
+            source_course = CourseFactory.create()
+            message_too_long = "traceback".rjust(CourseRerunState.MAX_MESSAGE_LENGTH * 2, '-')
+            with mock.patch('traceback.format_exc', return_value=message_too_long):
+                destination_course_key = self.post_rerun_request(source_course.id)
+            rerun_state = CourseRerunState.objects.find_first(course_key=destination_course_key)
+            self.assertEquals(rerun_state.state, CourseRerunUIStateManager.State.FAILED)
+            self.assertTrue(rerun_state.message.endswith("traceback"))
+            self.assertEqual(len(rerun_state.message), CourseRerunState.MAX_MESSAGE_LENGTH)
+
 
 class EntryPageTestCase(TestCase):
     """
     Tests entry pages that aren't specific to a course.
     """
     def setUp(self):
+        super(EntryPageTestCase, self).setUp()
         self.client = AjaxEnabledTestClient()
 
     def _test_page(self, page, status_code=200):
@@ -1893,6 +2065,35 @@ class EntryPageTestCase(TestCase):
         self._test_page("/logout", 302)
 
 
+class SigninPageTestCase(TestCase):
+    """
+    Tests that the CSRF token is directly included in the signin form. This is
+    important to make sure that the script is functional independently of any
+    other script.
+    """
+
+    def test_csrf_token_is_present_in_form(self):
+        # Expected html:
+        # <form>
+        #   ...
+        #   <fieldset>
+        #       ...
+        #       <input name="csrfmiddlewaretoken" value="...">
+        #       ...
+        #       </fieldset>
+        #       ...
+        #</form>
+        response = self.client.get("/signin")
+        csrf_token = response.cookies.get("csrftoken")
+        form = lxml.html.fromstring(response.content).get_element_by_id("login_form")
+        csrf_input_field = form.find(".//input[@name='csrfmiddlewaretoken']")
+
+        self.assertIsNotNone(csrf_token)
+        self.assertIsNotNone(csrf_token.value)
+        self.assertIsNotNone(csrf_input_field)
+        self.assertEqual(csrf_token.value, csrf_input_field.attrib["value"])
+
+
 def _create_course(test, course_key, course_data):
     """
     Creates a course via an AJAX request and verifies the URL returned in the response.
@@ -1905,6 +2106,6 @@ def _create_course(test, course_key, course_data):
     test.assertEqual(data['url'], course_url)
 
 
-def _get_course_id(course_data, key_class=SlashSeparatedCourseKey):
-    """Returns the course ID (org/number/run)."""
-    return key_class(course_data['org'], course_data['number'], course_data['run'])
+def _get_course_id(store, course_data):
+    """Returns the course ID."""
+    return store.make_course_key(course_data['org'], course_data['number'], course_data['run'])

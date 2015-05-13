@@ -1,37 +1,51 @@
-from django.test import TestCase
 from django.conf import settings
-import unittest
 from django.test.client import RequestFactory
-from django.contrib.auth.models import User
 from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
 from xmodule.modulestore.tests.factories import CourseFactory
-from student.models import CourseEnrollment
-from student.roles import CourseInstructorRole
-from student.tests.factories import AdminFactory
-from student.roles import CourseStaffRole
-from student import auth
 from courseware.access import has_access
 if not settings.LMS_TEST_ENV:
     from .views import *
 from unittest import skipIf
-import requests, json
-
+import json
+import hashlib
+import yaml
 
 @skipIf(settings.LMS_TEST_ENV, "only invoked from cms")
-class EnrollTest(ModuleStoreTestCase):
+class EnrollTest(ModuleStoreTestCase):      
     def setUp(self):
+        super(EnrollTest, self).setUp()
+        data= yaml.compose("""
+            :app_id: 2
+            :lms_id: 1
+            :callback_url: https://www.cmappstage.com
+            :credentials: !ruby/array:Chef::Node::ImmutableArray
+            - !ruby/hash:Chef::Node::ImmutableMash
+              api_key: testapi
+              shared_secret: 123456789
+            :aws_access_key_id: abcdef
+            :aws_secret_access_key: testaws
+            :environment: development
+            """)
+        with open('/edx/app/edxapp/test_meta_data.yml', 'w') as outfile:
+            yaml.serialize(data,stream=outfile)
+        self.outfile = outfile    
         self.factory = RequestFactory()
         self.course = CourseFactory.create(org="test",course="courseid", \
             display_name="run1")
         self.user = User.objects.create_user(username='uname', \
             email='user@email.com', password = 'password') 
-        self.cm_secret_token = 'cm_secret_token'
-     
+        self.shared_secret = '123456789'
+    
+    def tearDown(self):
+        del self.outfile
+
     def test_user_enrollment(self):
+        body = json.dumps({ \
+            'email':self.user.email, 'course_id':self.course.id.to_deprecated_string()})
+        token = hashlib.sha256(self.shared_secret + "|" + body)
         request = self.factory.post('/cm/enroll', \
-            json.dumps({'cm_secret_token':self.cm_secret_token, \
-            'email':self.user.email, 'course_id':self.course.id.to_deprecated_string()}), \
-            content_type = 'application/json')
+            body, \
+            content_type = 'application/json',HTTP_X_SAVANNAH_TOKEN = token.hexdigest())
         response = cm_enroll_user(request)
         self.assertEqual(response.status_code,200)
         response_object = json.loads(response.content)
@@ -39,12 +53,14 @@ class EnrollTest(ModuleStoreTestCase):
         self.assertFalse(has_access(self.user, 'staff', self.course))
 
     def test_staff_enrollment(self):
-        request = self.factory.post('/cm/enroll', \
-            json.dumps({'cm_secret_token':self.cm_secret_token, \
+        body = json.dumps({ \
             'email':self.user.email, \
             'role':'staff', \
-            'course_id':self.course.id.to_deprecated_string()}), \
-            content_type = 'application/json')
+            'course_id':self.course.id.to_deprecated_string()})
+        token = hashlib.sha256(self.shared_secret + "|" + body)
+        request = self.factory.post('/cm/enroll', \
+            body, \
+            content_type = 'application/json',HTTP_X_SAVANNAH_TOKEN = token.hexdigest())
         response = cm_enroll_user(request)
         self.assertEqual(response.status_code,200)
         response_object = json.loads(response.content)
@@ -52,38 +68,60 @@ class EnrollTest(ModuleStoreTestCase):
         self.assertTrue(has_access(self.user, 'staff', self.course))
         
     def test_user_enrollment_non_existent_user(self):
+        body = json.dumps({ \
+            'email':'xx@xx.com', 'course_id':self.course.id.to_deprecated_string()})
+        token = hashlib.sha256(self.shared_secret + "|" + body)
         request = self.factory.post('/cm/enroll', \
-            json.dumps({'cm_secret_token':self.cm_secret_token, \
-            'email':'xx@xx.com', 'course_id':self.course.id.to_deprecated_string()}), \
-            content_type = 'application/json')
+            body, \
+            content_type = 'application/json',HTTP_X_SAVANNAH_TOKEN = token.hexdigest())
         response = cm_enroll_user(request)
         self.assertEqual(response.status_code, 422)
         response_object = json.loads(response.content)
         self.assertEqual(response_object['errors'], 'User does not exist')
 
     def test_user_enrollment_bad_params(self):
+        body = json.dumps({ \
+            'email':self.user.email})
+        token = hashlib.sha256(self.shared_secret + "|" + body)
         request = self.factory.post('/cm/enroll', \
-            json.dumps({'cm_secret_token': self.cm_secret_token, \
-            'email':self.user.email}), \
-            content_type = 'application/json')
+            body, \
+            content_type = 'application/json',HTTP_X_SAVANNAH_TOKEN = token.hexdigest())
         response = cm_enroll_user(request)
         self.assertEqual(response.status_code, 400)
         response_object = json.loads(response.content)
         self.assertEqual(response_object['errors'], 'Missing params')
-
+        
+        body = json.dumps({ \
+            'course_id':self.course.id.to_deprecated_string()})
+        token = hashlib.sha256(self.shared_secret + "|" + body)
         request = self.factory.post('/cm/enroll', \
-            json.dumps({'cm_secret_token':self.cm_secret_token, \
-            'course_id':self.course.id.to_deprecated_string()}), \
-            content_type = 'application/json')
+            body, \
+            content_type = 'application/json',HTTP_X_SAVANNAH_TOKEN = token.hexdigest())
         response = cm_enroll_user(request)
         self.assertEqual(response.status_code, 400)
         response_object = json.loads(response.content)
         self.assertEqual(response_object['errors'], 'Missing params')
 
 @skipIf(settings.LMS_TEST_ENV, "only invoked from cms")
-class UnEnrollTest(TestCase):
+class UnEnrollTest(ModuleStoreTestCase):
     def setUp(self):
-        self.cm_secret_token = 'cm_secret_token'
+        data= yaml.compose("""
+            :app_id: 2
+            :lms_id: 1
+            :callback_url: https://www.cmappstage.com
+            :credentials: !ruby/array:Chef::Node::ImmutableArray
+            - !ruby/hash:Chef::Node::ImmutableMash
+              api_key: testapi
+              shared_secret: 123456789
+            :aws_access_key_id: abcdef
+            :aws_secret_access_key: testaws
+            :environment: development
+            """)
+        with open('/edx/app/edxapp/test_meta_data.yml', 'w') as outfile:
+            yaml.serialize(data,stream=outfile)
+        self.outfile = outfile
+        self.shared_secret = '123456789'
+        super(UnEnrollTest, self).setUp()
         self.factory = RequestFactory()
         self.course = CourseFactory.create(org="test",course="courseid", \
             display_name="run1")
@@ -92,23 +130,30 @@ class UnEnrollTest(TestCase):
         course_key = get_key_from_course_id(self.course.id.to_deprecated_string())
         CourseEnrollment.enroll(self.user, course_key)
 
+    def tearDown(self):
+        del self.outfile
+
     def test_user_unenrollment(self):
+        body = json.dumps({ \
+            'email':self.user.email, 'course_id':self.course.id.to_deprecated_string()})
+        token = hashlib.sha256(self.shared_secret + "|" + body)
         request = self.factory.post('/cm/unenroll', \
-            json.dumps({'cm_secret_token':self.cm_secret_token, \
-            'email':self.user.email, 'course_id':self.course.id.to_deprecated_string()}), \
-            content_type = 'application/json')
+            body, \
+            content_type = 'application/json',HTTP_X_SAVANNAH_TOKEN = token.hexdigest())
         response = cm_unenroll_user(request)
         self.assertEqual(response.status_code,200)
         response_object = json.loads(response.content)
         self.assertEqual(response_object['success'],'ok')
 
     def test_staff_unenrollment(self):
-        request = self.factory.post('/cm/enroll', \
-            json.dumps({'cm_secret_token':self.cm_secret_token, \
+        body = json.dumps({ \
             'email':self.user.email, \
             'role':'staff', \
-            'course_id':self.course.id.to_deprecated_string()}), \
-            content_type = 'application/json')
+            'course_id':self.course.id.to_deprecated_string()})
+        token = hashlib.sha256(self.shared_secret + "|" + body)
+        request = self.factory.post('/cm/enroll', \
+            body, \
+            content_type = 'application/json',HTTP_X_SAVANNAH_TOKEN = token.hexdigest())
         response = cm_unenroll_user(request)
         self.assertEqual(response.status_code,200)
         response_object = json.loads(response.content)
@@ -116,57 +161,88 @@ class UnEnrollTest(TestCase):
         self.assertFalse(has_access(self.user, 'staff', self.course))
 
     def test_user_unenrollment_bad_params(self):
+        body = json.dumps({ \
+            'email':self.user.email})
+        token = hashlib.sha256(self.shared_secret + "|" + body)
         request = self.factory.post('/cm/unenroll', \
-            json.dumps({'cm_secret_token':self.cm_secret_token, \
-            'email':self.user.email}), \
-            content_type = 'application/json')
+            body, \
+            content_type = 'application/json',HTTP_X_SAVANNAH_TOKEN = token.hexdigest())
         response = cm_unenroll_user(request)
         self.assertEqual(response.status_code, 400)
         response_object = json.loads(response.content)
         self.assertEqual(response_object['errors'],'Missing params')
-
+        body = json.dumps({ \
+            'course_id':self.course.id.to_deprecated_string()})
+        token = hashlib.sha256(self.shared_secret + "|" + body)
         request = self.factory.post('/cm/unenroll', \
-            json.dumps({'cm_secret_token':self.cm_secret_token, \
-            'course_id':self.course.id.to_deprecated_string()}), \
-            content_type = 'application/json')
+            body, \
+            content_type = 'application/json',HTTP_X_SAVANNAH_TOKEN = token.hexdigest())
         response = cm_unenroll_user(request)
         self.assertEqual(response.status_code, 400)
         response_object = json.loads(response.content)
         self.assertEqual(response_object['errors'],'Missing params')
 
 @skipIf(settings.LMS_TEST_ENV, "only invoked from cms")
-class UserCreationTest(TestCase):
+class UserCreationTest(ModuleStoreTestCase):    
     def setUp(self):
-        self.cm_secret_token = 'cm_secret_token'
+        super(UserCreationTest, self).setUp()
+        data= yaml.compose("""
+            :app_id: 2
+            :lms_id: 1
+            :callback_url: https://www.cmappstage.com
+            :credentials: !ruby/array:Chef::Node::ImmutableArray
+            - !ruby/hash:Chef::Node::ImmutableMash
+              api_key: testapi
+              shared_secret: 123456789
+            :aws_access_key_id: abcdef
+            :aws_secret_access_key: testaws
+            :environment: development
+            """)
+        with open('/edx/app/edxapp/test_meta_data.yml', 'w') as outfile:
+            yaml.serialize(data,stream=outfile)
+        self.outfile = outfile
+        self.shared_secret = '123456789'        
         self.factory = RequestFactory()
         self.user_creation_options = {'username':'uname', \
               'email':'email@email.com', \
               'password':'pwd123!123', \
-              'name':'name', \
-              'cm_secret_token': self.cm_secret_token}
-      
+              'name':'name'}
+    
+    def tearDown(self):
+        del self.outfile
+
     def test_user_creation(self):
+        body = json.dumps({ \
+            'name':'name','email':'email@email.com', \
+                'username':'uname','password':'pwd123!123'})
+        token = hashlib.sha256(self.shared_secret + "|" + body)
         request = self.factory.post('/cm/user', \
-                json.dumps(self.user_creation_options), content_type='application/json')
+                body, content_type='application/json',HTTP_X_SAVANNAH_TOKEN = token.hexdigest())
         response = cm_create_new_user(request)
         self.assertEqual(response.status_code, 200)
         response_object = json.loads(response.content)
         self.assertTrue('email@email.com' in response_object['id'])
 
     def test_bad_params_user_error(self):
-        request = self.factory.post('/cm/user', \
-            json.dumps({'cm_secret_token':self.cm_secret_token, \
+        body = json.dumps({ \
             'username':'uname','email':'email@email.com', \
-                'password':'password'}), content_type='application/json')
+                'password':'password'})
+        token = hashlib.sha256(self.shared_secret + "|" + body)
+        request = self.factory.post('/cm/user', \
+            body, content_type='application/json',HTTP_X_SAVANNAH_TOKEN = token.hexdigest())
         response = cm_create_new_user(request)
         self.assertEqual(response.status_code, 400)
         response_object = json.loads(response.content)
         self.assertTrue('Bad Request' in response_object['errors'])
 
     def test_duplicate_email_user_error(self):
+        body = json.dumps({ \
+            'name':'name','email':'email@email.com', \
+                'username':'uname','password':'pwd123!123'})
+        token = hashlib.sha256(self.shared_secret + "|" + body)
         request = self.factory.post('/cm/user', \
-                json.dumps(self.user_creation_options), \
-                content_type = 'application/json')
+                body, \
+                content_type = 'application/json',HTTP_X_SAVANNAH_TOKEN = token.hexdigest())
         first_response = cm_create_new_user(request)
 
         # again
@@ -177,11 +253,30 @@ class UserCreationTest(TestCase):
         self.assertTrue(('email@email.com') in response_object['id'])
 
 @skipIf(settings.LMS_TEST_ENV, "only invoked from cms")
-class CourseDeletionTest(TestCase):
+class CourseDeletionTest(ModuleStoreTestCase):
     def setUp(self):
-        self.cm_secret_token = 'cm_secret_token'
+        data= yaml.compose("""
+            :app_id: 2
+            :lms_id: 1
+            :callback_url: https://www.cmappstage.com
+            :credentials: !ruby/array:Chef::Node::ImmutableArray
+            - !ruby/hash:Chef::Node::ImmutableMash
+              api_key: testapi
+              shared_secret: 123456789
+            :aws_access_key_id: abcdef
+            :aws_secret_access_key: testaws
+            :environment: development
+            """)
+        with open('/edx/app/edxapp/test_meta_data.yml', 'w') as outfile:
+            yaml.serialize(data,stream=outfile)
+        self.outfile = outfile
+        self.shared_secret = '123456789'               
+        super(CourseDeletionTest, self).setUp()
         self.factory = RequestFactory()
 
+    def tearDown(self):
+        del self.outfile
+        
     def test_deleting_course(self):
         course = CourseFactory.create(org="test",course="courseid", \
                                            display_name="run1")
@@ -189,11 +284,12 @@ class CourseDeletionTest(TestCase):
         user = User.objects.create_user(username='uname', \
                                              email='user@email.com', password = 'password')
         CourseInstructorRole(course.id).add_users(user)
-        course_deletion_options = {'email': user.email,
-                                        'cm_secret_token': self.cm_secret_token}
+        course_deletion_options = {'email': user.email}
+        body = json.dumps(course_deletion_options)
+        token = hashlib.sha256(self.shared_secret + "|" + body)                                       
         url = '/cm/delete_course/' + str(course.id)
-        request = self.factory.post(url, json.dumps(course_deletion_options),
-                                    content_type='application/json')
+        request = self.factory.post(url, body,
+                                    content_type='application/json',HTTP_X_SAVANNAH_TOKEN = token.hexdigest())
         response = cm_course_delete(request, str(course_id))
         self.assertEqual(response.status_code, 200)
         self.assertEqual(json.loads(response.content), u'{"message": "successfully deleted course"}')
@@ -203,9 +299,10 @@ class CourseDeletionTest(TestCase):
         url = '/cm/delete_course/'
         user = User.objects.create_user(username='uname', \
                                             email='someuser@mail.com', password = 'password')
-        course_deletion_options = {'email': 'someuser@mail.com',
-                                   'cm_secret_token': self.cm_secret_token}
-        request = self.factory.post(url + "1", json.dumps(course_deletion_options), content_type='application/json')
+        course_deletion_options = {'email': 'someuser@mail.com'}
+        body = json.dumps(course_deletion_options)
+        token = hashlib.sha256(self.shared_secret + "|" + body)
+        request = self.factory.post(url + "1", body , content_type='application/json',HTTP_X_SAVANNAH_TOKEN = token.hexdigest())
         response = cm_course_delete(request, "1")
         self.assertEqual(response.status_code, 404)
         self.assertEqual(json.loads(response.content), u'{"error": "Course Key not found for course id: 1"}')
@@ -217,10 +314,11 @@ class CourseDeletionTest(TestCase):
         user = User.objects.create_user(username='uname', \
                                         email='user1@email.com', password = 'password')
 
-        course_deletion_options = {'email': user.email,
-                                   'cm_secret_token': self.cm_secret_token}
+        course_deletion_options = {'email': user.email}
+        body = json.dumps(course_deletion_options)
+        token = hashlib.sha256(self.shared_secret + "|" + body)
         url = '/cm/delete_course/' + str(course.id)
-        request = self.factory.post(url, json.dumps(course_deletion_options), content_type='application/json')
+        request = self.factory.post(url, body, content_type='application/json',HTTP_X_SAVANNAH_TOKEN = token.hexdigest())
         response = cm_course_delete(request, str(course_id))
         self.assertEqual(response.status_code, 401)
         self.assertEqual(json.loads(response.content), u'{"error": "course deletion attempted by unauthorized user"}')

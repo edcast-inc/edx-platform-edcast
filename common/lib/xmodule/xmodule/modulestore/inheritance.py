@@ -44,14 +44,6 @@ class InheritanceMixin(XBlockMixin):
         help=_("Enter the default date by which problems are due."),
         scope=Scope.settings,
     )
-    extended_due = Date(
-        help="Date that this problem is due by for a particular student. This "
-             "can be set by an instructor, and will override the global due "
-             "date if it is set to a date that is later than the global due "
-             "date.",
-        default=None,
-        scope=Scope.user_state,
-    )
     visible_to_staff_only = Boolean(
         help=_("If true, can be seen only by course staff, regardless of start date."),
         default=False,
@@ -88,6 +80,10 @@ class InheritanceMixin(XBlockMixin):
     )
     graceperiod = Timedelta(
         help="Amount of time after the due date that submissions will be accepted",
+        scope=Scope.settings,
+    )
+    group_access = Dict(
+        help=_("Enter the ids for the content groups this problem belongs to."),
         scope=Scope.settings,
     )
     showanswer = String(
